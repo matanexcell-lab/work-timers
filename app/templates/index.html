@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Work Timers</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; }
+    h1 { margin-bottom: 16px; }
+    .card { border: 1px solid #ddd; padding: 18px; margin-bottom: 18px; width: 320px; }
+    .time { font-size: 44px; margin: 10px 0 14px; }
+    button { padding: 8px 14px; margin-right: 10px; }
+    .meta { color:#666; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <h1>⏱ Work Timers</h1>
+  <div class="meta" id="meta">Loading...</div>
+
+  <div id="timers"></div>
+
+<script>
+const TIMER_COUNT = {{ timer_count }};
+
+function el(tag, attrs={}, children=[]) {
+  const e = document.createElement(tag);
+  Object.entries(attrs).forEach(([k,v]) => e.setAttribute(k,v));
+  children.forEach(c => e.appendChild(c));
+  return e;
+}
+
+async function post(url) {
+  const r = await fetch(url, {method:"POST"});
+  return r.json();
+}
+
+async function refresh() {
+  const r = await fetch("/api/status");
+  const data = await r.json();
+
+  document.getElementById("meta").textContent =
+    `Workday: ${data.workday} | last logged hour: ${data.last_logged_hour ?? "-"}`;
+
+  const container = document.getElementById("timers");
+  container.innerHTML = "";
+
+  data.timers.forEach((t, i) => {
+    const idx = i + 1;
+    const card = el("div", {class:"card"});
+
+    card.appendChild(el("div", {}, [document.createTextNode(`Timer ${idx}`)]));
+    card.appendChild(el("div", {class:"time", id:`time_${idx}`}, [document.createTextNode(t.time)]));
+
+    const startBtn = el("button", {}, [document.createTextNode("Start")]);
+    startBtn.onclick = async () => { await post(`/api/timer/${idx}/start`); await refresh(); };
+
+    const stopBtn = el("button", {}, [document.createTextNode("Stop")]);
+    stopBtn.onclick = async () => { await post(`/api/timer/${idx}/stop`); await refresh(); };
+
+    const resetBtn = el("button", {}, [document.createTextNode("Reset")]);
+    resetBtn.onclick = async () => { await post(`/api/timer/${idx}/reset`); await refresh(); };
+
+    card.appendChild(startBtn);
+    card.appendChild(stopBtn);
+    card.appendChild(resetBtn);
+
+    container.appendChild(card);
+  });
+}
+
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>
