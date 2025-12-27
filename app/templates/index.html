@@ -1,94 +1,59 @@
 <!DOCTYPE html>
 <html lang="he">
 <head>
-    <meta charset="UTF-8">
-    <title>Work Timers</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f2f2f2;
-            text-align: center;
-            direction: rtl;
-        }
-        h1 {
-            margin-top: 20px;
-        }
-        .timer {
-            background: white;
-            padding: 20px;
-            margin: 20px auto;
-            width: 260px;
-            border-radius: 10px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
-        }
-        .time {
-            font-size: 26px;
-            margin: 10px 0;
-        }
-        button {
-            margin: 5px;
-            padding: 8px 14px;
-            font-size: 16px;
-            cursor: pointer;
-        }
-        .log-btn {
-            margin-top: 30px;
-            font-size: 18px;
-            padding: 10px 20px;
-        }
-    </style>
+<meta charset="UTF-8">
+<title>Work Timers</title>
+<style>
+body { font-family: Arial; background:#f2f2f2; text-align:center; }
+.card { background:white; padding:20px; margin:20px auto; width:280px; border-radius:10px; }
+button { font-size:18px; padding:8px 14px; margin:5px; cursor:pointer; }
+#logStatus { margin-top:20px; font-size:18px; }
+</style>
 </head>
 <body>
 
-<h1>⏱ Work Timers</h1>
+<h1>⏱️ Work Timers</h1>
 
-<div class="timer">
-    <h2>Timer 1</h2>
-    <div id="t1" class="time">00:00:00</div>
-    <button onclick="post('/api/timer/1/start')">▶ Start</button>
-    <button onclick="post('/api/timer/1/stop')">⏸ Stop</button><br>
-    <button onclick="post('/api/timer/1/reset')">🔄 Reset</button>
+<div class="card">
+<h2>Timer 1</h2>
+<div id="t1">00:00:00</div>
+<button onclick="post('/api/timer/1/start')">▶ Start</button>
+<button onclick="post('/api/timer/1/stop')">⏸ Stop</button>
+<button onclick="post('/api/timer/1/reset')">🔄 Reset</button>
 </div>
 
-<div class="timer">
-    <h2>Timer 2</h2>
-    <div id="t2" class="time">00:00:00</div>
-    <button onclick="post('/api/timer/2/start')">▶ Start</button>
-    <button onclick="post('/api/timer/2/stop')">⏸ Stop</button><br>
-    <button onclick="post('/api/timer/2/reset')">🔄 Reset</button>
+<div class="card">
+<h2>Timer 2</h2>
+<div id="t2">00:00:00</div>
+<button onclick="post('/api/timer/2/start')">▶ Start</button>
+<button onclick="post('/api/timer/2/stop')">⏸ Stop</button>
+<button onclick="post('/api/timer/2/reset')">🔄 Reset</button>
 </div>
 
-<button class="log-btn" onclick="post('/api/log-now')">
-    ✏️ עדכן עכשיו ל-Google Sheet
-</button>
+<button onclick="logNow()">✏️ עדכן עכשיו ל-Google Sheet</button>
+<div id="logStatus"></div>
 
 <script>
+async function refresh() {
+    const r = await fetch("/api/status");
+    const d = await r.json();
+    document.getElementById("t1").innerText = d.timers[0];
+    document.getElementById("t2").innerText = d.timers[1];
+}
+setInterval(refresh, 1000);
+refresh();
+
 async function post(url) {
-    try {
-        await fetch(url, { method: "POST" });
-        refreshStatus();
-    } catch (e) {
-        alert("שגיאה בבקשה");
-    }
+    await fetch(url, { method:"POST" });
 }
 
-async function refreshStatus() {
-    try {
-        const res = await fetch("/api/status");
-        const data = await res.json();
-
-        document.getElementById("t1").innerText = data.timers[0];
-        document.getElementById("t2").innerText = data.timers[1];
-    } catch (e) {
-        console.log("status error");
-    }
+async function logNow() {
+    const r = await fetch("/api/log-now", { method:"POST" });
+    const d = await r.json();
+    const el = document.getElementById("logStatus");
+    el.innerText = d.message;
+    el.style.color = d.ok ? "green" : "red";
 }
-
-// רענון כל שנייה
-setInterval(refreshStatus, 1000);
-
-// רענון ראשוני
-refreshStatus();
 </script>
 
 </body>
