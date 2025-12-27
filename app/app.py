@@ -5,7 +5,7 @@ import threading
 from datetime import datetime, timedelta
 
 import pytz
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 
 # =========================
 # CONFIG
@@ -14,7 +14,7 @@ TZ = pytz.timezone("Asia/Jerusalem")
 
 TIMER_COUNT = 2
 FIRST_HOUR = 8
-LAST_HOUR = 23      # 08:00–23:00
+LAST_HOUR = 23
 RESET_HOUR = 5
 
 SPREADSHEET_NAME = "Time Tracking"
@@ -23,7 +23,7 @@ WORKSHEET_NAME = "Log"
 # =========================
 # FLASK
 # =========================
-app = Flask(__name__)
+app = Flask(__name__, template_folder="templates")
 
 # =========================
 # GOOGLE SHEETS
@@ -37,14 +37,12 @@ def gs_connect():
         raise RuntimeError("Missing GOOGLE_CREDS_JSON")
 
     info = json.loads(raw)
-
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
     creds = Credentials.from_service_account_info(info, scopes=scopes)
     gc = gspread.authorize(creds)
-
     sh = gc.open(SPREADSHEET_NAME)
     return sh.worksheet(WORKSHEET_NAME)
 
@@ -61,13 +59,20 @@ timers = [
 last_logged_hour = None
 current_workday = None
 
+simulation = {
+    "enabled": False,
+    "dt": None
+}
+
 # =========================
 # HELPERS
 # =========================
 def now():
+    if simulation["enabled"] and simulation["dt"]:
+        return simulation["dt"]
     return datetime.now(TZ)
 
-def seconds_to_hms(sec: int) -> str:
+def seconds_to_hms(sec):
     h = sec // 3600
     m = (sec % 3600) // 60
     s = sec % 60
@@ -115,7 +120,6 @@ def background_worker():
         dt = now()
         wd = workday_key(dt)
 
-        # Reset daily
         if current_workday != wd:
             current_workday = wd
             last_logged_hour = None
@@ -125,7 +129,6 @@ def background_worker():
                 t["accum"] = 0
             print("🔄 Daily reset")
 
-        # Hourly logging
         if (
             dt.minute == 0
             and FIRST_HOUR <= dt.hour <= LAST_HOUR
@@ -141,6 +144,7 @@ def background_worker():
 # ROUTES
 # =========================
 @app.route("/")
+@app.route("/ui")
 def ui():
     return render_template("index.html")
 
@@ -148,6 +152,8 @@ def ui():
 def status():
     dt = now()
     return jsonify({
+        "now_str": dt.strftime("%d/%m/%Y %H:%M:%S"),
+        "simulation": simulation["enabled"],
         "workday": current_workday,
         "timers": [
             seconds_to_hms(effective_seconds(timers[i], dt))
@@ -157,48 +163,55 @@ def status():
 
 @app.route("/api/timer/<int:i>/start", methods=["POST"])
 def start_timer(i):
-    t = timers[i - 1]
-    if not t["running"]:
-        t["running"] = True
-        t["start"] = now()
-    return jsonify({"ok": True})
+    if 1 <= i <= TIMER_COUNT:
+        t = timers[i - 1]
+        if not t["running"]:
+            t["running"] = True
+            t["start"] = now()
+        return jsonify({"status": "started"})
+    return jsonify({"error": "invalid"}), 400
 
 @app.route("/api/timer/<int:i>/stop", methods=["POST"])
 def stop_timer(i):
-    t = timers[i - 1]
-    if t["running"]:
-        t["accum"] += int((now() - t["start"]).total_seconds())
-        t["running"] = False
-        t["start"] = None
-    return jsonify({"ok": True})
+    if 1 <= i <= TIMER_COUNT:
+        t = timers[i - 1]
+        if t["running"]:
+            t["accum"] += int((now() - t["start"]).total_seconds())
+            t["running"] = False
+            t["start"] = None
+        return jsonify({"status": "stopped"})
+    return jsonify({"error": "invalid"}), 400
 
 @app.route("/api/timer/<int:i>/reset", methods=["POST"])
 def reset_timer(i):
-    timers[i - 1] = {"running": False, "start": None, "accum": 0}
-    return jsonify({"ok": True})
+    if 1 <= i <= TIMER_COUNT:
+        timers[i - 1] = {"running": False, "start": None, "accum": 0}
+        return jsonify({"status": "reset"})
+    return jsonify({"error": "invalid"}), 400
 
 @app.route("/api/log-now", methods=["POST"])
 def log_now():
-    try:
-        if not (FIRST_HOUR <= now().hour <= LAST_HOUR):
-            return jsonify({
-                "ok": False,
-                "message": "⏰ מחוץ לשעות הרישום"
-            }), 400
+    if not (FIRST_HOUR <= now().hour <= LAST_HOUR):
+        return jsonify({"error": "מחוץ לשעות הרישום"})
+    values = write_hour(now().hour)
+    return jsonify({"logged": True, "values": values})
 
-        values = write_hour(now().hour)
+@app.route("/api/sim", methods=["POST"])
+def set_sim():
+    data = request.json
+    simulation["enabled"] = data.get("enabled", False)
 
-        return jsonify({
-            "ok": True,
-            "message": "✅ נרשם בהצלחה ל-Google Sheet",
-            "values": values
-        })
+    if simulation["enabled"]:
+        d = data.get("date")
+        t = data.get("time")
+        if d and t:
+            simulation["dt"] = TZ.localize(
+                datetime.strptime(d + " " + t, "%Y-%m-%d %H:%M")
+            )
+    else:
+        simulation["dt"] = None
 
-    except Exception as e:
-        return jsonify({
-            "ok": False,
-            "message": f"❌ שגיאה בכתיבה: {e}"
-        }), 500
+    return jsonify(simulation)
 
 # =========================
 # MAIN
