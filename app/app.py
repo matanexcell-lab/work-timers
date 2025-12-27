@@ -23,7 +23,7 @@ WORKSHEET_NAME = "Log"
 # =========================
 # FLASK
 # =========================
-app = Flask(__name__)
+app = Flask(__name__, template_folder="../templates")
 
 # =========================
 # GOOGLE SHEETS
@@ -60,18 +60,18 @@ last_logged_hour = None
 current_workday = None
 
 # סימולציה
-simulation_enabled = False
+use_simulation = False
 simulated_now = None
 
 # =========================
 # TIME HELPERS
 # =========================
 def now():
-    if simulation_enabled and simulated_now:
+    if use_simulation and simulated_now:
         return simulated_now
     return datetime.now(TZ)
 
-def seconds_to_hms(sec: int) -> str:
+def seconds_to_hms(sec):
     h = sec // 3600
     m = (sec % 3600) // 60
     s = sec % 60
@@ -90,42 +90,31 @@ def workday_key(dt):
     return dt.strftime("%d/%m/%Y")
 
 # =========================
-# GOOGLE SHEET WRITE (⭐ משודרג ⭐)
+# GOOGLE SHEET WRITE
 # =========================
-def write_hour(hour):
-    date_str = current_workday
-
-    # חיפוש התאריך בשורה 3
+def find_or_create_date_column(date_str):
     header = WS.row_values(3)
-    date_col = None
+    if date_str in header:
+        return header.index(date_str) + 1
 
-    for i, val in enumerate(header, start=1):
-        if val.strip() == date_str:
-            date_col = i
-            break
+    col = len(header) + 1
+    WS.update_cell(3, col, date_str)
+    WS.update_cell(3, col + 1, date_str)
+    return col
 
-    if not date_col:
-        raise RuntimeError(f"❌ Date {date_str} not found in row 3")
+def write_hour(hour):
+    date_str = workday_key(now())
+    col = find_or_create_date_column(date_str)
 
-    # חישוב שורה לפי שעה
     row = 7 + (hour - FIRST_HOUR)
 
-    values = [
-        seconds_to_hms(effective_seconds(timers[i], now()))
-        for i in range(TIMER_COUNT)
-    ]
+    v1 = seconds_to_hms(effective_seconds(timers[0], now()))
+    v2 = seconds_to_hms(effective_seconds(timers[1], now()))
 
-    WS.update_cell(row, date_col, values[0])
-    WS.update_cell(row, date_col + 1, values[1])
+    WS.update_cell(row, col, v1)
+    WS.update_cell(row, col + 1, v2)
 
-    return {
-        "date": date_str,
-        "hour": hour,
-        "row": row,
-        "col_timer1": date_col,
-        "col_timer2": date_col + 1,
-        "values": values
-    }
+    return [v1, v2]
 
 # =========================
 # BACKGROUND WORKER
@@ -137,7 +126,6 @@ def background_worker():
         dt = now()
         wd = workday_key(dt)
 
-        # איפוס יומי
         if current_workday != wd:
             current_workday = wd
             last_logged_hour = None
@@ -145,17 +133,14 @@ def background_worker():
                 t["running"] = False
                 t["start"] = None
                 t["accum"] = 0
-            print("🔄 Daily reset")
 
-        # שעה עגולה
         if (
             dt.minute == 0
             and FIRST_HOUR <= dt.hour <= LAST_HOUR
             and dt.hour != last_logged_hour
         ):
-            info = write_hour(dt.hour)
+            write_hour(dt.hour)
             last_logged_hour = dt.hour
-            print("📝 Logged:", info)
 
         time.sleep(30)
 
@@ -164,10 +149,6 @@ def background_worker():
 # =========================
 @app.route("/")
 def home():
-    return "✅ Work Timers is running"
-
-@app.route("/ui")
-def ui():
     return render_template("index.html")
 
 @app.route("/api/status")
@@ -175,8 +156,7 @@ def status():
     dt = now()
     return jsonify({
         "now": dt.strftime("%d/%m/%Y %H:%M:%S"),
-        "simulation": simulation_enabled,
-        "workday": current_workday,
+        "simulated": use_simulation,
         "timers": [
             seconds_to_hms(effective_seconds(timers[i], dt))
             for i in range(TIMER_COUNT)
@@ -185,69 +165,44 @@ def status():
 
 @app.route("/api/timer/<int:i>/start", methods=["POST"])
 def start_timer(i):
-    if 1 <= i <= TIMER_COUNT:
-        t = timers[i - 1]
-        if not t["running"]:
-            t["running"] = True
-            t["start"] = now()
-        return jsonify({"status": "started", "timer": i})
-    return jsonify({"error": "invalid timer"}), 400
+    t = timers[i - 1]
+    if not t["running"]:
+        t["running"] = True
+        t["start"] = now()
+    return jsonify(ok=True)
 
 @app.route("/api/timer/<int:i>/stop", methods=["POST"])
 def stop_timer(i):
-    if 1 <= i <= TIMER_COUNT:
-        t = timers[i - 1]
-        if t["running"]:
-            t["accum"] += int((now() - t["start"]).total_seconds())
-            t["running"] = False
-            t["start"] = None
-        return jsonify({"status": "stopped", "timer": i})
-    return jsonify({"error": "invalid timer"}), 400
+    t = timers[i - 1]
+    if t["running"]:
+        t["accum"] += int((now() - t["start"]).total_seconds())
+        t["running"] = False
+        t["start"] = None
+    return jsonify(ok=True)
 
 @app.route("/api/timer/<int:i>/reset", methods=["POST"])
 def reset_timer(i):
-    if 1 <= i <= TIMER_COUNT:
-        timers[i - 1] = {"running": False, "start": None, "accum": 0}
-        return jsonify({"status": "reset", "timer": i})
-    return jsonify({"error": "invalid timer"}), 400
+    timers[i - 1] = {"running": False, "start": None, "accum": 0}
+    return jsonify(ok=True)
 
 @app.route("/api/log-now", methods=["POST"])
 def log_now():
-    dt = now()
-    if not (FIRST_HOUR <= dt.hour <= LAST_HOUR):
-        return jsonify({"error": "outside logging hours"}), 400
+    values = write_hour(now().hour)
+    return jsonify(logged=True, values=values)
 
-    info = write_hour(dt.hour)
-    return jsonify({
-        "logged": True,
-        **info
-    })
-
-# =========================
-# SIMULATION
-# =========================
 @app.route("/api/simulate", methods=["POST"])
 def simulate():
-    global simulation_enabled, simulated_now
-
+    global use_simulation, simulated_now
     data = request.json
-    enabled = data.get("enabled", False)
-
-    if enabled:
-        date = data["date"]      # dd/mm/yyyy
-        hour = int(data["hour"])
+    use_simulation = data["enabled"]
+    if use_simulation:
         simulated_now = TZ.localize(
-            datetime.strptime(date, "%d/%m/%Y").replace(hour=hour)
+            datetime.strptime(
+                data["date"] + " " + data["time"],
+                "%Y-%m-%d %H:%M"
+            )
         )
-        simulation_enabled = True
-    else:
-        simulation_enabled = False
-        simulated_now = None
-
-    return jsonify({
-        "simulation": simulation_enabled,
-        "now": now().strftime("%d/%m/%Y %H:%M:%S")
-    })
+    return jsonify(ok=True)
 
 # =========================
 # MAIN
