@@ -23,7 +23,7 @@ WORKSHEET_NAME = "Log"
 # =========================
 # FLASK
 # =========================
-app = Flask(__name__, template_folder="../templates")
+app = Flask(__name__)
 
 # =========================
 # GOOGLE SHEETS
