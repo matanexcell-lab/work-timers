@@ -1,52 +1,60 @@
-import os
-import json
-import time
-import threading
+import os, json, time, threading
 from datetime import datetime, timedelta
-
 import pytz
 from flask import Flask, jsonify, render_template, request
 
-# =========================
-# CONFIG
-# =========================
-TZ = pytz.timezone("Asia/Jerusalem")
-TIMER_COUNT = 2
-RESET_HOUR = 5
+import gspread
+from google.oauth2.service_account import Credentials
 
-# =========================
-# APP
-# =========================
+# ================= CONFIG =================
+TZ = pytz.timezone("Asia/Jerusalem")
+
+FIRST_HOUR = 8
+LAST_HOUR = 24
+RESET_HOUR = 5
+TIMER_COUNT = 2
+
+SPREADSHEET_NAME = "Time Tracking"
+WORKSHEET_NAME = "Log"
+
+# ================= FLASK =================
 app = Flask(__name__)
 
-# =========================
-# STATE
-# =========================
-timers = [
-    {"running": False, "start": None, "accum": 0}
-    for _ in range(TIMER_COUNT)
-]
+# ================= GOOGLE =================
+def gs_connect():
+    raw = os.getenv("GOOGLE_CREDS_JSON")
+    info = json.loads(raw)
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(info, scopes=scopes)
+    gc = gspread.authorize(creds)
+    return gc.open(SPREADSHEET_NAME).worksheet(WORKSHEET_NAME)
 
-current_workday = None
+WS = gs_connect()
 
-# סימולציה
-simulation_on = False
-sim_now = None
-
-# =========================
-# TIME HELPERS
-# =========================
-def real_now():
-    return datetime.now(TZ)
+# ================= TIME / SIM =================
+simulation = {
+    "enabled": False,
+    "dt": None
+}
 
 def now():
-    global sim_now
-    if simulation_on and sim_now:
-        sim_now += timedelta(seconds=1)
-        return sim_now
-    return real_now()
+    return simulation["dt"] if simulation["enabled"] else datetime.now(TZ)
 
-def seconds_to_hms(sec):
+def tick():
+    if simulation["enabled"]:
+        simulation["dt"] += timedelta(seconds=1)
+
+# ================= STATE =================
+timers = [{"running": False, "start": None, "accum": 0} for _ in range(TIMER_COUNT)]
+current_workday = None
+start_written = False
+last_logged_hour = None
+
+# ================= HELPERS =================
+def hms(sec):
     h = sec // 3600
     m = (sec % 3600) // 60
     s = sec % 60
@@ -54,7 +62,7 @@ def seconds_to_hms(sec):
 
 def effective_seconds(t, dt):
     sec = t["accum"]
-    if t["running"] and t["start"]:
+    if t["running"]:
         sec += int((dt - t["start"]).total_seconds())
     return sec
 
@@ -64,96 +72,111 @@ def workday_key(dt):
         dt -= timedelta(days=1)
     return dt.strftime("%d/%m/%Y")
 
-# =========================
-# BACKGROUND RESET
-# =========================
-def background_worker():
-    global current_workday
+# ================= GOOGLE HELPERS =================
+def find_or_create_date_col(date_str):
+    headers = WS.row_values(3)
+    if date_str in headers:
+        col = headers.index(date_str) + 1
+    else:
+        col = len(headers) + 1
+        WS.update_cell(3, col, date_str)
+        WS.update_cell(3, col + 1, date_str)
+    return col
 
+def write_start_time(dt):
+    global start_written
+    if start_written:
+        return
+    col = find_or_create_date_col(workday_key(dt))
+    WS.update_cell(4, col, dt.strftime("%H:%M"))
+    start_written = True
+
+def write_hourly(dt):
+    global last_logged_hour
+    hour = dt.hour
+    if not (FIRST_HOUR <= hour <= LAST_HOUR):
+        return
+    if hour == last_logged_hour:
+        return
+
+    col = find_or_create_date_col(workday_key(dt))
+    row = 7 + (hour - FIRST_HOUR)
+
+    for i in range(TIMER_COUNT):
+        WS.update_cell(row, col + i, hms(effective_seconds(timers[i], dt)))
+
+    last_logged_hour = hour
+
+# ================= BACKGROUND =================
+def background():
+    global current_workday, start_written, last_logged_hour
     while True:
         dt = now()
         wd = workday_key(dt)
 
-        if current_workday != wd:
+        if wd != current_workday:
             current_workday = wd
+            start_written = False
+            last_logged_hour = None
             for t in timers:
-                t["running"] = False
-                t["start"] = None
-                t["accum"] = 0
-            print("🔄 Daily reset")
+                t.update({"running": False, "start": None, "accum": 0})
 
+        if dt.minute == 0:
+            write_hourly(dt)
+
+        tick()
         time.sleep(1)
 
-# =========================
-# ROUTES
-# =========================
+# ================= ROUTES =================
 @app.route("/")
-def home():
+def ui():
     return render_template("index.html")
 
 @app.route("/api/status")
 def status():
     dt = now()
     return jsonify({
-        "now_str": dt.strftime("%d/%m/%Y %H:%M:%S"),
-        "simulation": simulation_on,
-        "workday": current_workday,
-        "timers": [
-            seconds_to_hms(effective_seconds(timers[i], dt))
-            for i in range(TIMER_COUNT)
-        ]
+        "datetime": dt.strftime("%d/%m/%Y %H:%M:%S"),
+        "timers": [hms(effective_seconds(t, dt)) for t in timers],
+        "simulation": simulation["enabled"]
     })
 
 @app.route("/api/timer/<int:i>/start", methods=["POST"])
 def start_timer(i):
-    if 1 <= i <= TIMER_COUNT:
-        t = timers[i - 1]
-        if not t["running"]:
-            t["running"] = True
-            t["start"] = now()
-        return jsonify({"ok": True})
-    return jsonify({"error": "invalid"}), 400
+    t = timers[i - 1]
+    if not t["running"]:
+        t["running"] = True
+        t["start"] = now()
+        write_start_time(now())
+    return jsonify(ok=True)
 
 @app.route("/api/timer/<int:i>/stop", methods=["POST"])
 def stop_timer(i):
-    if 1 <= i <= TIMER_COUNT:
-        t = timers[i - 1]
-        if t["running"]:
-            t["accum"] += int((now() - t["start"]).total_seconds())
-            t["running"] = False
-            t["start"] = None
-        return jsonify({"ok": True})
-    return jsonify({"error": "invalid"}), 400
+    t = timers[i - 1]
+    if t["running"]:
+        t["accum"] += int((now() - t["start"]).total_seconds())
+        t["running"] = False
+    return jsonify(ok=True)
 
 @app.route("/api/timer/<int:i>/reset", methods=["POST"])
 def reset_timer(i):
-    if 1 <= i <= TIMER_COUNT:
-        timers[i - 1] = {"running": False, "start": None, "accum": 0}
-        return jsonify({"ok": True})
-    return jsonify({"error": "invalid"}), 400
+    timers[i - 1] = {"running": False, "start": None, "accum": 0}
+    return jsonify(ok=True)
 
-# =========================
-# SIMULATION
-# =========================
 @app.route("/api/sim/start", methods=["POST"])
 def sim_start():
-    global simulation_on, sim_now
-    data = request.json
-    sim_now = TZ.localize(datetime.strptime(data["datetime"], "%Y-%m-%d %H:%M"))
-    simulation_on = True
-    return jsonify({"ok": True})
+    date = request.json["date"]
+    hour = request.json["hour"]
+    simulation["enabled"] = True
+    simulation["dt"] = TZ.localize(datetime.strptime(f"{date} {hour}", "%d/%m/%Y %H:%M"))
+    return jsonify(ok=True)
 
 @app.route("/api/sim/stop", methods=["POST"])
 def sim_stop():
-    global simulation_on, sim_now
-    simulation_on = False
-    sim_now = None
-    return jsonify({"ok": True})
+    simulation["enabled"] = False
+    return jsonify(ok=True)
 
-# =========================
-# MAIN
-# =========================
+# ================= MAIN =================
 if __name__ == "__main__":
-    current_workday = workday_key(real_now())
-    threading.Thread(target=background_worker, daemon=True).start()
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    threading.Thread(target=background, daemon=True).start()
+    app.run(host="0.0.0.0", port=5000)
