@@ -16,14 +16,13 @@ SPREADSHEET_NAME = os.getenv("SPREADSHEET_NAME", "Time Tracking")
 WORKSHEET_NAME = os.getenv("WORKSHEET_NAME", "Log")
 STATE_SHEET_NAME = os.getenv("STATE_SHEET_NAME", "_state")
 
-CRON_TOKEN = os.getenv("CRON_TOKEN", "")
+CRON_TOKEN = os.getenv("CRON_TOKEN", "").strip()
 
 DATE_ROW = 3
 NAMES_ROW = 5
-TIME_COL = 1          # Column A
-START_ROW = 7         # Row where time slots begin
+START_ROW = 7
 FIRST_HOUR = 8
-LAST_HOUR = 23        # logs for 23:00-24:00 at 23:00
+LAST_HOUR = 23
 
 # =========================
 # APP
@@ -39,7 +38,7 @@ def gs_client():
 
     raw = os.getenv("GOOGLE_CREDS_JSON", "").strip()
     if not raw:
-        raise RuntimeError("Missing GOOGLE_CREDS_JSON env var")
+        raise RuntimeError("GOOGLE_CREDS_JSON missing")
 
     info = json.loads(raw)
     scopes = [
@@ -53,28 +52,27 @@ def gs_open():
     gc = gs_client()
     sh = gc.open(SPREADSHEET_NAME)
     ws = sh.worksheet(WORKSHEET_NAME)
+
     try:
         state_ws = sh.worksheet(STATE_SHEET_NAME)
     except Exception:
-        state_ws = sh.add_worksheet(title=STATE_SHEET_NAME, rows=10, cols=5)
+        state_ws = sh.add_worksheet(title=STATE_SHEET_NAME, rows=5, cols=5)
         state_ws.update("A1", "state_json")
         state_ws.update("A2", "{}")
-    return sh, ws, state_ws
+
+    return ws, state_ws
 
 # =========================
 # TIME / STATE
 # =========================
-def now_tz() -> datetime:
+def now_tz():
     return datetime.now(TZ)
 
-def seconds_to_hms(sec: int) -> str:
+def seconds_to_hms(sec):
     sec = max(0, int(sec))
-    h = sec // 3600
-    m = (sec % 3600) // 60
-    s = sec % 60
-    return f"{h:02d}:{m:02d}:{s:02d}"
+    return f"{sec//3600:02d}:{(sec%3600)//60:02d}:{sec%60:02d}"
 
-def workday_key(dt: datetime) -> str:
+def workday_key(dt):
     cutoff = dt.replace(hour=5, minute=0, second=0, microsecond=0)
     if dt < cutoff:
         dt -= timedelta(days=1)
@@ -85,217 +83,120 @@ def default_state():
         "workday": workday_key(now_tz()),
         "last_logged_hour": None,
         "timers": [
-            {"running": False, "start_iso": None, "accumulated": 0}
-            for _ in range(TIMER_COUNT)
-        ],
-    }
-
-def load_state(state_ws):
-    raw = (state_ws.acell("A2").value or "").strip()
-    try:
-        st = json.loads(raw) if raw else default_state()
-    except Exception:
-        st = default_state()
-
-    while len(st["timers"]) < TIMER_COUNT:
-        st["timers"].append({"running": False, "start_iso": None, "accumulated": 0})
-    st["timers"] = st["timers"][:TIMER_COUNT]
-
-    if "workday" not in st:
-        st["workday"] = workday_key(now_tz())
-
-    return st
-
-def save_state(state_ws, st):
-    state_ws.update("A2", json.dumps(st, ensure_ascii=False))
-
-def parse_iso(s: str):
-    if not s:
-        return None
-    try:
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = TZ.localize(dt)
-        return dt.astimezone(TZ)
-    except Exception:
-        return None
-
-def current_seconds(timer: dict, dt: datetime) -> int:
-    acc = int(timer.get("accumulated", 0) or 0)
-    if timer.get("running") and timer.get("start_iso"):
-        st = parse_iso(timer["start_iso"])
-        if st:
-            acc += int((dt - st).total_seconds())
-    return acc
-
-def maybe_daily_reset(st: dict, dt: datetime) -> bool:
-    wd = workday_key(dt)
-    if st.get("workday") != wd:
-        st["workday"] = wd
-        st["last_logged_hour"] = None
-        st["timers"] = [
-            {"running": False, "start_iso": None, "accumulated": 0}
+            {"running": False, "start": None, "acc": 0}
             for _ in range(TIMER_COUNT)
         ]
-        return True
-    return False
+    }
+
+def load_state(ws):
+    raw = (ws.acell("A2").value or "").strip()
+    try:
+        return json.loads(raw) if raw else default_state()
+    except Exception:
+        return default_state()
+
+def save_state(ws, st):
+    ws.update("A2", json.dumps(st, ensure_ascii=False))
+
+def current_seconds(timer, now):
+    acc = timer["acc"]
+    if timer["running"] and timer["start"]:
+        acc += int((now - datetime.fromisoformat(timer["start"])).total_seconds())
+    return acc
 
 # =========================
-# SHEET HELPERS
+# SHEET
 # =========================
-def ensure_time_slots(ws):
+def row_for_hour(h):
+    return START_ROW + (h - FIRST_HOUR)
+
+def ensure_slots(ws):
     labels = []
     for h in range(FIRST_HOUR, LAST_HOUR + 1):
-        end = "24:00" if h + 1 == 24 else f"{h+1:02d}:00"
-        labels.append(f"{h:02d}:00-{end}")
+        end = "24:00" if h == 23 else f"{h+1:02d}:00"
+        labels.append([f"{h:02d}:00-{end}"])
+    ws.update(f"A{START_ROW}:A{START_ROW+len(labels)-1}", labels)
 
-    rng = f"A{START_ROW}:A{START_ROW + len(labels) - 1}"
-    existing = ws.get(rng)
-    existing_vals = [row[0] if row else "" for row in existing]
-
-    updates = []
-    for i, label in enumerate(labels):
-        updates.append([existing_vals[i] if existing_vals[i].strip() else label])
-
-    ws.update(rng, updates)
-
-def find_or_create_date_columns(ws, date_str: str) -> int:
-    row_vals = ws.row_values(DATE_ROW)
-    for idx, v in enumerate(row_vals, start=1):
-        if (v or "").strip() == date_str:
-            return idx
-
-    start_col = max(2, len(row_vals) + 1)
-    ws.update_cell(DATE_ROW, start_col, date_str)
-    ws.update_cell(DATE_ROW, start_col + 1, date_str)
-    ws.update_cell(NAMES_ROW, start_col, "Timer 1")
-    ws.update_cell(NAMES_ROW, start_col + 1, "Timer 2")
-    return start_col
-
-def row_for_hour_slot(hour: int) -> int:
-    return START_ROW + (hour - FIRST_HOUR)
-
-def write_cumulative_to_sheet(ws, date_str: str, hour_slot: int, timer_values_hms):
-    ensure_time_slots(ws)
-    base_col = find_or_create_date_columns(ws, date_str)
-    r = row_for_hour_slot(hour_slot)
-    ws.update_cell(r, base_col, timer_values_hms[0])
-    ws.update_cell(r, base_col + 1, timer_values_hms[1])
+def ensure_date_cols(ws, date):
+    row = ws.row_values(DATE_ROW)
+    for i, v in enumerate(row, start=1):
+        if v == date:
+            return i
+    col = max(len(row)+1, 2)
+    ws.update_cell(DATE_ROW, col, date)
+    ws.update_cell(DATE_ROW, col+1, date)
+    ws.update_cell(NAMES_ROW, col, "Timer 1")
+    ws.update_cell(NAMES_ROW, col+1, "Timer 2")
+    return col
 
 # =========================
-# AUTO LOGIC
+# CRON LOGIC
 # =========================
-def do_tick(sh, ws, state_ws, st, dt):
-    maybe_daily_reset(st, dt)
+def cron_tick():
+    ws, state_ws = gs_open()
+    now = now_tz()
+    st = load_state(state_ws)
 
-    if dt.hour < FIRST_HOUR or dt.hour > LAST_HOUR:
+    if st["workday"] != workday_key(now):
+        st = default_state()
+
+    hour = now.hour
+    if hour < FIRST_HOUR or hour > LAST_HOUR:
         save_state(state_ws, st)
-        return {"logged": False, "reason": "outside hours"}
+        return {"skipped": True}
 
-    target_hour = dt.hour
-    last = st.get("last_logged_hour")
+    last = st["last_logged_hour"]
+    if last is not None and hour <= last:
+        return {"skipped": True}
 
-    if last is not None and target_hour <= last:
-        return {"logged": False, "reason": "already logged"}
+    ensure_slots(ws)
+    base_col = ensure_date_cols(ws, st["workday"])
 
-    hours_to_write = [target_hour] if last is None else list(range(last + 1, target_hour + 1))
-
-    for h in hours_to_write:
-        vals = [seconds_to_hms(current_seconds(st["timers"][i], dt)) for i in range(TIMER_COUNT)]
-        write_cumulative_to_sheet(ws, st["workday"], h, vals)
+    for h in range((last or hour), hour+1):
+        r = row_for_hour(h)
+        for i in range(TIMER_COUNT):
+            sec = current_seconds(st["timers"][i], now)
+            ws.update_cell(r, base_col+i, seconds_to_hms(sec))
         st["last_logged_hour"] = h
 
     save_state(state_ws, st)
-    return {"logged": True, "hours": hours_to_write}
+    return {"ok": True, "hour": hour}
 
 # =========================
 # ROUTES
 # =========================
 @app.route("/")
 def home():
-    return render_template("index.html", timer_count=TIMER_COUNT)
+    return "Work Timers is running"
 
 @app.route("/api/status")
-def api_status():
-    try:
-        sh, ws, state_ws = gs_open()
-        dt = now_tz()
-        st = load_state(state_ws)
-        maybe_daily_reset(st, dt)
-        save_state(state_ws, st)
-
-        timers = []
-        for i in range(TIMER_COUNT):
-            sec = current_seconds(st["timers"][i], dt)
-            timers.append({
-                "running": st["timers"][i]["running"],
-                "seconds": sec,
-                "time": seconds_to_hms(sec)
-            })
-
-        return jsonify({
-            "ok": True,
-            "gs_ready": True,
-            "workday": st["workday"],
-            "last_logged_hour": st.get("last_logged_hour"),
-            "timers": timers
-        })
-
-    except Exception as e:
-        return jsonify({
-            "ok": False,
-            "gs_ready": False,
-            "error": str(e)
-        }), 500
-
-@app.route("/api/timer/<int:idx>/start", methods=["POST"])
-def api_start(idx):
-    if idx < 1 or idx > TIMER_COUNT:
-        return jsonify({"error": "invalid timer"}), 400
-
-    sh, ws, state_ws = gs_open()
-    dt = now_tz()
+def status():
+    ws, state_ws = gs_open()
     st = load_state(state_ws)
-    maybe_daily_reset(st, dt)
-
-    t = st["timers"][idx - 1]
-    if not t["running"]:
-        t["running"] = True
-        t["start_iso"] = dt.isoformat()
-
-    save_state(state_ws, st)
-    return jsonify({"status": "started"})
-
-@app.route("/api/timer/<int:idx>/stop", methods=["POST"])
-def api_stop(idx):
-    if idx < 1 or idx > TIMER_COUNT:
-        return jsonify({"error": "invalid timer"}), 400
-
-    sh, ws, state_ws = gs_open()
-    dt = now_tz()
-    st = load_state(state_ws)
-    maybe_daily_reset(st, dt)
-
-    t = st["timers"][idx - 1]
-    if t["running"] and t["start_iso"]:
-        st_dt = parse_iso(t["start_iso"])
-        if st_dt:
-            t["accumulated"] += int((dt - st_dt).total_seconds())
-    t["running"] = False
-    t["start_iso"] = None
-
-    save_state(state_ws, st)
-    return jsonify({"status": "stopped"})
+    now = now_tz()
+    timers = [
+        seconds_to_hms(current_seconds(t, now))
+        for t in st["timers"]
+    ]
+    return jsonify({"workday": st["workday"], "timers": timers})
 
 @app.route("/api/cron/tick")
-def api_cron_tick():
+def cron():
     token = request.args.get("token", "")
-    if CRON_TOKEN and token != CRON_TOKEN:
+    if not CRON_TOKEN or token != CRON_TOKEN:
         return jsonify({"error": "unauthorized"}), 401
+    return jsonify(cron_tick())
 
-    sh, ws, state_ws = gs_open()
-    st = load_state(state_ws)
-    return jsonify(do_tick(sh, ws, state_ws, st, now_tz()))
+# 🔍 DEBUG – לבדיקה בלבד
+@app.route("/api/debug/env")
+def debug_env():
+    return jsonify({
+        "CRON_TOKEN_env": CRON_TOKEN,
+        "token_query": request.args.get("token")
+    })
 
+# =========================
+# LOCAL
+# =========================
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5000)
