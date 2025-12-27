@@ -1,9 +1,11 @@
 import os
 import json
+import time
+import threading
 from datetime import datetime, timedelta
 
 import pytz
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template
 
 # =========================
 # CONFIG
@@ -12,7 +14,7 @@ TZ = pytz.timezone("Asia/Jerusalem")
 
 TIMER_COUNT = 2
 FIRST_HOUR = 8
-LAST_HOUR = 23          # 23 = 23:00–24:00
+LAST_HOUR = 23      # 08:00–23:00
 RESET_HOUR = 5
 
 SPREADSHEET_NAME = "Time Tracking"
@@ -21,7 +23,7 @@ WORKSHEET_NAME = "Log"
 # =========================
 # FLASK
 # =========================
-app = Flask(__name__, template_folder="templates")
+app = Flask(__name__)
 
 # =========================
 # GOOGLE SHEETS
@@ -35,17 +37,21 @@ def gs_connect():
         raise RuntimeError("Missing GOOGLE_CREDS_JSON")
 
     info = json.loads(raw)
+
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
     creds = Credentials.from_service_account_info(info, scopes=scopes)
     gc = gspread.authorize(creds)
+
     sh = gc.open(SPREADSHEET_NAME)
     return sh.worksheet(WORKSHEET_NAME)
 
+WS = gs_connect()
+
 # =========================
-# STATE (IN MEMORY)
+# STATE
 # =========================
 timers = [
     {"running": False, "start": None, "accum": 0}
@@ -83,12 +89,9 @@ def workday_key(dt):
 # GOOGLE SHEET WRITE
 # =========================
 def write_hour(hour):
-    WS = gs_connect()
-
     date_str = current_workday
     row = 7 + (hour - FIRST_HOUR)
 
-    # תאריך
     WS.update_cell(3, 2, date_str)
     WS.update_cell(3, 3, date_str)
 
@@ -103,47 +106,46 @@ def write_hour(hour):
     return values
 
 # =========================
-# AUTO HOURLY CHECK
+# BACKGROUND WORKER
 # =========================
-def hourly_check():
+def background_worker():
     global last_logged_hour, current_workday
 
-    dt = now()
-    wd = workday_key(dt)
+    while True:
+        dt = now()
+        wd = workday_key(dt)
 
-    # reset יומי
-    if current_workday != wd:
-        current_workday = wd
-        last_logged_hour = None
-        for t in timers:
-            t["running"] = False
-            t["start"] = None
-            t["accum"] = 0
+        # Reset daily
+        if current_workday != wd:
+            current_workday = wd
+            last_logged_hour = None
+            for t in timers:
+                t["running"] = False
+                t["start"] = None
+                t["accum"] = 0
+            print("🔄 Daily reset")
 
-    # שעה עגולה
-    if (
-        dt.minute == 0
-        and FIRST_HOUR <= dt.hour <= LAST_HOUR
-        and dt.hour != last_logged_hour
-    ):
-        write_hour(dt.hour)
-        last_logged_hour = dt.hour
+        # Hourly logging
+        if (
+            dt.minute == 0
+            and FIRST_HOUR <= dt.hour <= LAST_HOUR
+            and dt.hour != last_logged_hour
+        ):
+            write_hour(dt.hour)
+            last_logged_hour = dt.hour
+            print(f"📝 Logged hour {dt.hour}")
+
+        time.sleep(30)
 
 # =========================
 # ROUTES
 # =========================
 @app.route("/")
-def home():
-    return "✅ Work Timers is running"
-
-@app.route("/ui")
 def ui():
-    hourly_check()
     return render_template("index.html")
 
 @app.route("/api/status")
 def status():
-    hourly_check()
     dt = now()
     return jsonify({
         "workday": current_workday,
@@ -155,46 +157,53 @@ def status():
 
 @app.route("/api/timer/<int:i>/start", methods=["POST"])
 def start_timer(i):
-    hourly_check()
-    if 1 <= i <= TIMER_COUNT:
-        t = timers[i - 1]
-        if not t["running"]:
-            t["running"] = True
-            t["start"] = now()
-        return jsonify({"status": "started", "timer": i})
-    return jsonify({"error": "invalid timer"}), 400
+    t = timers[i - 1]
+    if not t["running"]:
+        t["running"] = True
+        t["start"] = now()
+    return jsonify({"ok": True})
 
 @app.route("/api/timer/<int:i>/stop", methods=["POST"])
 def stop_timer(i):
-    hourly_check()
-    if 1 <= i <= TIMER_COUNT:
-        t = timers[i - 1]
-        if t["running"]:
-            t["accum"] += int((now() - t["start"]).total_seconds())
-            t["running"] = False
-            t["start"] = None
-        return jsonify({"status": "stopped", "timer": i})
-    return jsonify({"error": "invalid timer"}), 400
+    t = timers[i - 1]
+    if t["running"]:
+        t["accum"] += int((now() - t["start"]).total_seconds())
+        t["running"] = False
+        t["start"] = None
+    return jsonify({"ok": True})
 
 @app.route("/api/timer/<int:i>/reset", methods=["POST"])
 def reset_timer(i):
-    hourly_check()
-    if 1 <= i <= TIMER_COUNT:
-        timers[i - 1] = {"running": False, "start": None, "accum": 0}
-        return jsonify({"status": "reset", "timer": i})
-    return jsonify({"error": "invalid timer"}), 400
+    timers[i - 1] = {"running": False, "start": None, "accum": 0}
+    return jsonify({"ok": True})
 
 @app.route("/api/log-now", methods=["POST"])
 def log_now():
-    hourly_check()
-    if not (FIRST_HOUR <= now().hour <= LAST_HOUR):
-        return jsonify({"error": "outside logging hours"}), 400
-    values = write_hour(now().hour)
-    return jsonify({"logged": True, "values": values})
+    try:
+        if not (FIRST_HOUR <= now().hour <= LAST_HOUR):
+            return jsonify({
+                "ok": False,
+                "message": "⏰ מחוץ לשעות הרישום"
+            }), 400
+
+        values = write_hour(now().hour)
+
+        return jsonify({
+            "ok": True,
+            "message": "✅ נרשם בהצלחה ל-Google Sheet",
+            "values": values
+        })
+
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "message": f"❌ שגיאה בכתיבה: {e}"
+        }), 500
 
 # =========================
 # MAIN
 # =========================
 if __name__ == "__main__":
     current_workday = workday_key(now())
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    threading.Thread(target=background_worker, daemon=True).start()
+    app.run(host="0.0.0.0", port=5000)
