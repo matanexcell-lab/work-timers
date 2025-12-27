@@ -3,57 +3,126 @@
 <head>
 <meta charset="UTF-8">
 <title>Work Timers</title>
+
 <style>
-body { font-family: Arial; background:#f2f2f2; text-align:center; }
-.card { background:white; padding:20px; margin:20px auto; width:280px; border-radius:10px; }
-button { font-size:18px; padding:8px 14px; margin:5px; cursor:pointer; }
-#logStatus { margin-top:20px; font-size:18px; }
+body {
+    font-family: Arial;
+    background: #f2f2f2;
+    text-align: center;
+}
+
+h1 {
+    font-size: 34px;
+}
+
+#clock {
+    font-size: 20px;
+    margin-bottom: 20px;
+}
+
+.timer {
+    background: white;
+    width: 300px;
+    margin: 15px auto;
+    padding: 25px;
+    border-radius: 15px;
+    box-shadow: 0 0 10px rgba(0,0,0,.15);
+}
+
+.time {
+    font-size: 34px;
+    margin: 10px 0;
+}
+
+button {
+    font-size: 18px;
+    padding: 12px 18px;
+    margin: 5px;
+}
+
+.sim {
+    background: white;
+    width: 320px;
+    margin: 30px auto;
+    padding: 20px;
+    border-radius: 15px;
+}
 </style>
 </head>
+
 <body>
 
-<h1>⏱️ Work Timers</h1>
+<h1>⏱ Work Timers</h1>
+<div id="clock">טוען...</div>
 
-<div class="card">
+<div class="timer">
 <h2>Timer 1</h2>
-<div id="t1">00:00:00</div>
-<button onclick="post('/api/timer/1/start')">▶ Start</button>
-<button onclick="post('/api/timer/1/stop')">⏸ Stop</button>
-<button onclick="post('/api/timer/1/reset')">🔄 Reset</button>
+<div class="time" id="t1">00:00:00</div>
+<button onclick="act(1,'start')">▶ Start</button>
+<button onclick="act(1,'stop')">⏸ Stop</button><br>
+<button onclick="act(1,'reset')">🔄 Reset</button>
 </div>
 
-<div class="card">
+<div class="timer">
 <h2>Timer 2</h2>
-<div id="t2">00:00:00</div>
-<button onclick="post('/api/timer/2/start')">▶ Start</button>
-<button onclick="post('/api/timer/2/stop')">⏸ Stop</button>
-<button onclick="post('/api/timer/2/reset')">🔄 Reset</button>
+<div class="time" id="t2">00:00:00</div>
+<button onclick="act(2,'start')">▶ Start</button>
+<button onclick="act(2,'stop')">⏸ Stop</button><br>
+<button onclick="act(2,'reset')">🔄 Reset</button>
 </div>
 
-<button onclick="logNow()">✏️ עדכן עכשיו ל-Google Sheet</button>
-<div id="logStatus"></div>
+<button onclick="logNow()">📝 עדכן עכשיו ל-Google Sheet</button>
+
+<div class="sim">
+<h3>🧪 סימולציית זמן</h3>
+<label>
+<input type="checkbox" id="simOn" onchange="setSim()"> הפעל סימולציה
+</label><br><br>
+
+תאריך:
+<input type="date" id="simDate"><br><br>
+שעה:
+<input type="time" id="simTime"><br><br>
+
+<button onclick="setSim()">✔ החלה</button>
+</div>
 
 <script>
-async function refresh() {
-    const r = await fetch("/api/status");
+async function refresh(){
+    const r = await fetch('/api/status');
     const d = await r.json();
-    document.getElementById("t1").innerText = d.timers[0];
-    document.getElementById("t2").innerText = d.timers[1];
+
+    document.getElementById('t1').innerText = d.timers[0];
+    document.getElementById('t2').innerText = d.timers[1];
+    document.getElementById('clock').innerText =
+        d.now_str + (d.simulation ? ' (סימולציה)' : '');
 }
-setInterval(refresh, 1000);
+
+async function act(i,a){
+    await fetch(`/api/timer/${i}/${a}`,{method:'POST'});
+    refresh();
+}
+
+async function logNow(){
+    const r = await fetch('/api/log-now',{method:'POST'});
+    alert(await r.text());
+}
+
+async function setSim(){
+    await fetch('/api/sim',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+            enabled:document.getElementById('simOn').checked,
+            date:document.getElementById('simDate').value,
+            time:document.getElementById('simTime').value
+        })
+    });
+    refresh();
+}
+
+setInterval(refresh,1000);
 refresh();
-
-async function post(url) {
-    await fetch(url, { method:"POST" });
-}
-
-async function logNow() {
-    const r = await fetch("/api/log-now", { method:"POST" });
-    const d = await r.json();
-    const el = document.getElementById("logStatus");
-    el.innerText = d.message;
-    el.style.color = d.ok ? "green" : "red";
-}
 </script>
 
 </body>
