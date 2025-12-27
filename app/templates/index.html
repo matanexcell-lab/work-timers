@@ -4,91 +4,77 @@
 <meta charset="UTF-8">
 <title>Work Timers</title>
 <style>
-body {
-  font-family: Arial;
-  background: #ddd;
-  text-align: center;
-}
-.card {
-  background: #eee;
-  padding: 20px;
-  margin: 15px auto;
-  width: 260px;
-  border-radius: 10px;
-}
-button {
-  font-size: 18px;
-  margin: 5px;
-  padding: 8px 16px;
-}
-#topTime {
-  margin-top: 6px;
-  font-size: 16px;
-}
+body { font-family: Arial; padding: 20px }
+button { font-size: 18px; padding: 10px 20px; margin: 5px }
+.timer { font-size: 32px; margin: 10px 0 }
+#nowTitle { font-size: 22px; font-weight: bold; margin-bottom: 15px }
+.sim { color: red }
 </style>
 </head>
 <body>
 
-<h2>⏱ Work Timers</h2>
-<div id="topTime">—</div>
+<div id="nowTitle">טוען...</div>
 
-<div class="card">
-  <h3>Timer 1</h3>
-  <div id="t1">00:00:00</div>
-  <button onclick="call('/api/timer/1/start')">▶ Start</button>
-  <button onclick="call('/api/timer/1/stop')">⏸ Stop</button>
-  <button onclick="call('/api/timer/1/reset')">🔄 Reset</button>
-</div>
+<div class="timer">טיימר 1: <span id="timer-1">00:00:00</span></div>
+<button onclick="start(1)">Start</button>
+<button onclick="stop(1)">Stop</button>
+<button onclick="resetT(1)">Reset</button>
 
-<div class="card">
-  <h3>Timer 2</h3>
-  <div id="t2">00:00:00</div>
-  <button onclick="call('/api/timer/2/start')">▶ Start</button>
-  <button onclick="call('/api/timer/2/stop')">⏸ Stop</button>
-  <button onclick="call('/api/timer/2/reset')">🔄 Reset</button>
-</div>
+<hr>
 
-<button onclick="logNow()">✏ עדכן עכשיו Google Sheet</button>
+<div class="timer">טיימר 2: <span id="timer-2">00:00:00</span></div>
+<button onclick="start(2)">Start</button>
+<button onclick="stop(2)">Stop</button>
+<button onclick="resetT(2)">Reset</button>
 
-<h3>🧪 סימולציה</h3>
+<hr>
+
+<h3>סימולציה</h3>
 <input type="date" id="simDate">
 <input type="time" id="simTime">
-<br>
-<button onclick="simulate(true)">הפעל סימולציה</button>
-<button onclick="simulate(false)">בטל סימולציה</button>
+<br><br>
+<button onclick="startSim()">הפעל סימולציה</button>
+<button onclick="stopSim()">כבה סימולציה</button>
 
 <script>
-async function refresh() {
-  const r = await fetch('/api/status');
+async function refreshStatus() {
+  const r = await fetch("/api/status");
   const d = await r.json();
-  document.getElementById('topTime').innerText =
-    d.now + (d.simulated ? ' (סימולציה)' : '');
-  document.getElementById('t1').innerText = d.timers[0];
-  document.getElementById('t2').innerText = d.timers[1];
-}
-setInterval(refresh, 1000);
-refresh();
 
-function call(url) {
-  fetch(url, {method:'POST'});
-}
+  document.getElementById("nowTitle").innerText =
+    d.now_str + (d.simulation ? " (סימולציה)" : "");
 
-function logNow() {
-  fetch('/api/log-now', {method:'POST'})
-    .then(r=>r.json())
-    .then(d=>alert(JSON.stringify(d)));
-}
+  if (d.simulation)
+    document.getElementById("nowTitle").classList.add("sim");
+  else
+    document.getElementById("nowTitle").classList.remove("sim");
 
-function simulate(on) {
-  fetch('/api/simulate', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({
-      enabled: on,
-      date: document.getElementById('simDate').value,
-      time: document.getElementById('simTime').value
-    })
+  d.timers.forEach((t, i) => {
+    document.getElementById(`timer-${i+1}`).innerText = t;
   });
+}
+
+setInterval(refreshStatus, 1000);
+refreshStatus();
+
+function start(i){ fetch(`/api/timer/${i}/start`,{method:"POST"}) }
+function stop(i){ fetch(`/api/timer/${i}/stop`,{method:"POST"}) }
+function resetT(i){ fetch(`/api/timer/${i}/reset`,{method:"POST"}) }
+
+async function startSim(){
+  const d = document.getElementById("simDate").value;
+  const t = document.getElementById("simTime").value;
+  await fetch("/api/sim/start",{
+    method:"POST",
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({datetime:`${d} ${t}`})
+  });
+  refreshStatus();
+}
+
+async function stopSim(){
+  await fetch("/api/sim/stop",{method:"POST"});
+  refreshStatus();
 }
 </script>
 
