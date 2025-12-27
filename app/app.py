@@ -1,7 +1,5 @@
 import os
 import json
-import time
-import threading
 from datetime import datetime, timedelta
 
 import pytz
@@ -23,7 +21,7 @@ WORKSHEET_NAME = "Log"
 # =========================
 # FLASK
 # =========================
-app = Flask(__name__)
+app = Flask(__name__, template_folder="templates")
 
 # =========================
 # GOOGLE SHEETS
@@ -46,10 +44,8 @@ def gs_connect():
     sh = gc.open(SPREADSHEET_NAME)
     return sh.worksheet(WORKSHEET_NAME)
 
-WS = gs_connect()
-
 # =========================
-# STATE
+# STATE (IN MEMORY)
 # =========================
 timers = [
     {"running": False, "start": None, "accum": 0}
@@ -87,10 +83,12 @@ def workday_key(dt):
 # GOOGLE SHEET WRITE
 # =========================
 def write_hour(hour):
+    WS = gs_connect()
+
     date_str = current_workday
     row = 7 + (hour - FIRST_HOUR)
 
-    # כותרת תאריך
+    # תאריך
     WS.update_cell(3, 2, date_str)
     WS.update_cell(3, 3, date_str)
 
@@ -105,36 +103,31 @@ def write_hour(hour):
     return values
 
 # =========================
-# BACKGROUND WORKER
+# AUTO HOURLY CHECK
 # =========================
-def background_worker():
+def hourly_check():
     global last_logged_hour, current_workday
 
-    while True:
-        dt = now()
-        wd = workday_key(dt)
+    dt = now()
+    wd = workday_key(dt)
 
-        # איפוס יומי
-        if current_workday != wd:
-            current_workday = wd
-            last_logged_hour = None
-            for t in timers:
-                t["running"] = False
-                t["start"] = None
-                t["accum"] = 0
-            print("🔄 Daily reset")
+    # reset יומי
+    if current_workday != wd:
+        current_workday = wd
+        last_logged_hour = None
+        for t in timers:
+            t["running"] = False
+            t["start"] = None
+            t["accum"] = 0
 
-        # שעה עגולה
-        if (
-            dt.minute == 0
-            and FIRST_HOUR <= dt.hour <= LAST_HOUR
-            and dt.hour != last_logged_hour
-        ):
-            write_hour(dt.hour)
-            last_logged_hour = dt.hour
-            print(f"📝 Logged hour {dt.hour}")
-
-        time.sleep(30)
+    # שעה עגולה
+    if (
+        dt.minute == 0
+        and FIRST_HOUR <= dt.hour <= LAST_HOUR
+        and dt.hour != last_logged_hour
+    ):
+        write_hour(dt.hour)
+        last_logged_hour = dt.hour
 
 # =========================
 # ROUTES
@@ -145,10 +138,12 @@ def home():
 
 @app.route("/ui")
 def ui():
+    hourly_check()
     return render_template("index.html")
 
 @app.route("/api/status")
 def status():
+    hourly_check()
     dt = now()
     return jsonify({
         "workday": current_workday,
@@ -160,6 +155,7 @@ def status():
 
 @app.route("/api/timer/<int:i>/start", methods=["POST"])
 def start_timer(i):
+    hourly_check()
     if 1 <= i <= TIMER_COUNT:
         t = timers[i - 1]
         if not t["running"]:
@@ -170,6 +166,7 @@ def start_timer(i):
 
 @app.route("/api/timer/<int:i>/stop", methods=["POST"])
 def stop_timer(i):
+    hourly_check()
     if 1 <= i <= TIMER_COUNT:
         t = timers[i - 1]
         if t["running"]:
@@ -181,6 +178,7 @@ def stop_timer(i):
 
 @app.route("/api/timer/<int:i>/reset", methods=["POST"])
 def reset_timer(i):
+    hourly_check()
     if 1 <= i <= TIMER_COUNT:
         timers[i - 1] = {"running": False, "start": None, "accum": 0}
         return jsonify({"status": "reset", "timer": i})
@@ -188,6 +186,7 @@ def reset_timer(i):
 
 @app.route("/api/log-now", methods=["POST"])
 def log_now():
+    hourly_check()
     if not (FIRST_HOUR <= now().hour <= LAST_HOUR):
         return jsonify({"error": "outside logging hours"}), 400
     values = write_hour(now().hour)
@@ -198,5 +197,4 @@ def log_now():
 # =========================
 if __name__ == "__main__":
     current_workday = workday_key(now())
-    threading.Thread(target=background_worker, daemon=True).start()
     app.run(host="0.0.0.0", port=5000, debug=False)
