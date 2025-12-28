@@ -48,7 +48,7 @@ WS = gs_connect()
 # STATE
 # =========================
 def new_timer():
-    return {"running": False, "start": None, "accum": 0}
+    return {"running": False, "accum": 0}
 
 timers_real = [new_timer() for _ in range(TIMER_COUNT)]
 timers_sim = [new_timer() for _ in range(TIMER_COUNT)]
@@ -82,17 +82,19 @@ def active_timers():
     return timers_sim if simulation["enabled"] else timers_real
 
 # =========================
-# DAILY RESET
+# DAILY RESET (REAL ONLY)
 # =========================
 def check_daily_reset():
     global last_reset_date, first_start_logged_date
 
     n = now()
+    if simulation["enabled"]:
+        return
+
     if n.hour >= RESET_HOUR:
         if last_reset_date != n.date():
             for t in timers_real:
                 t["running"] = False
-                t["start"] = None
                 t["accum"] = 0
             last_reset_date = n.date()
             first_start_logged_date = None
@@ -115,8 +117,8 @@ def log_to_sheet(force=False):
         return
 
     date_str = day.strftime("%d/%m/%Y")
-
     headers = WS.row_values(3)
+
     if date_str not in headers:
         return
 
@@ -129,21 +131,28 @@ def log_to_sheet(force=False):
     last_logged_hour = hour
 
 # =========================
-# BACKGROUND THREAD
+# BACKGROUND LOOP  ✅ FIXED
 # =========================
 def bg_loop():
     while True:
         with lock:
             check_daily_reset()
-            n = now()
 
-            for t in timers_real:
+            timers = active_timers()
+            for t in timers:
                 if t["running"]:
                     t["accum"] += 1
 
-            if n.minute == 0 and n.second == 0:
-                if FIRST_LOG_HOUR <= n.hour <= LAST_LOG_HOUR:
-                    log_to_sheet()
+            # קידום זמן סימולציה
+            if simulation["enabled"]:
+                simulation["now"] += timedelta(seconds=1)
+
+            # עדכון אוטומטי לשיט (רק מצב אמיתי)
+            if not simulation["enabled"]:
+                n = now()
+                if n.minute == 0 and n.second == 0:
+                    if FIRST_LOG_HOUR <= n.hour <= LAST_LOG_HOUR:
+                        log_to_sheet()
 
         time.sleep(1)
 
@@ -171,29 +180,25 @@ def status():
 def start_timer(i):
     global first_start_logged_date
     with lock:
-        check_daily_reset()
         t = active_timers()[i-1]
-        if not t["running"]:
-            t["running"] = True
-            t["start"] = now()
+        t["running"] = True
 
-            n = now()
-            if not simulation["enabled"] and n.hour >= RESET_HOUR:
-                if first_start_logged_date != n.date():
-                    headers = WS.row_values(3)
-                    date_str = n.strftime("%d/%m/%Y")
-                    if date_str in headers:
-                        col = headers.index(date_str) + 1
-                        WS.update_cell(4, col, n.strftime("%H:%M"))
-                        first_start_logged_date = n.date()
+        n = now()
+        if not simulation["enabled"] and n.hour >= RESET_HOUR:
+            if first_start_logged_date != n.date():
+                headers = WS.row_values(3)
+                date_str = n.strftime("%d/%m/%Y")
+                if date_str in headers:
+                    col = headers.index(date_str) + 1
+                    WS.update_cell(4, col, n.strftime("%H:%M"))
+                    first_start_logged_date = n.date()
+
     return jsonify(ok=True)
 
 @app.route("/api/timer/<int:i>/stop", methods=["POST"])
 def stop_timer(i):
     with lock:
-        t = active_timers()[i-1]
-        t["running"] = False
-        t["start"] = None
+        active_timers()[i-1]["running"] = False
     return jsonify(ok=True)
 
 @app.route("/api/timer/<int:i>/reset", methods=["POST"])
@@ -201,7 +206,6 @@ def reset_timer(i):
     with lock:
         t = active_timers()[i-1]
         t["running"] = False
-        t["start"] = None
         t["accum"] = 0
     return jsonify(ok=True)
 
@@ -230,7 +234,7 @@ def sim_stop():
     return jsonify(ok=True)
 
 # =========================
-# RUN LOCAL
+# RUN
 # =========================
 if __name__ == "__main__":
     app.run(debug=True)
