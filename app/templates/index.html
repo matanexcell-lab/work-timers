@@ -6,84 +6,72 @@
 <style>
 body { font-family: Arial; padding: 20px }
 button { font-size: 18px; padding: 10px 20px; margin: 5px }
-.timer { font-size: 30px; margin: 10px 0 }
-#nowTitle { font-size: 22px; font-weight: bold; margin-bottom: 15px }
+.timer { font-size: 28px; margin: 10px 0 }
 .sim { color: red }
 </style>
 </head>
 <body>
 
-<div id="nowTitle">טוען...</div>
+<h2 id="now">טוען...</h2>
 
-<div class="timer">טיימר 1: <span id="timer-1">00:00:00</span></div>
+<div class="timer">טיימר 1: <span id="t1">00:00:00</span></div>
 <button onclick="start(1)">Start</button>
 <button onclick="stop(1)">Stop</button>
 <button onclick="resetT(1)">Reset</button>
 
 <hr>
 
-<div class="timer">טיימר 2: <span id="timer-2">00:00:00</span></div>
+<div class="timer">טיימר 2: <span id="t2">00:00:00</span></div>
 <button onclick="start(2)">Start</button>
 <button onclick="stop(2)">Stop</button>
 <button onclick="resetT(2)">Reset</button>
 
 <hr>
 
-<button onclick="logSheet()">✏️ עדכן Google Sheet</button>
+<button onclick="log()">✏️ עדכן Google Sheet</button>
 
 <hr>
 
 <h3>סימולציה</h3>
-<input type="date" id="simDate">
-<input type="time" id="simTime">
+<input type="date" id="sd">
+<input type="time" id="st">
 <br><br>
-<button onclick="startSim()">הפעל סימולציה</button>
-<button onclick="stopSim()">כבה סימולציה</button>
+<button onclick="simStart()">הפעל סימולציה</button>
+<button onclick="simStop()">כבה סימולציה</button>
 
 <script>
-async function refreshStatus() {
+async function refresh(){
   const r = await fetch("/api/status");
   const d = await r.json();
 
-  const title = document.getElementById("nowTitle");
-  title.innerText = d.now_str + (d.simulation ? " (סימולציה)" : "");
-  title.className = d.simulation ? "sim" : "";
+  const now = document.getElementById("now");
+  now.innerText = d.now_str + (d.simulation ? " (סימולציה)" : "");
+  now.className = d.simulation ? "sim" : "";
 
-  d.timers.forEach((t,i)=>{
-    document.getElementById(`timer-${i+1}`).innerText = t;
-  });
-}
-
-setInterval(refreshStatus,1000);
-refreshStatus();
-
-function start(i){
-  fetch(`/api/timer/${i}/start`,{method:"POST"});
-}
-function stop(i){
-  fetch(`/api/timer/${i}/stop`,{method:"POST"});
-}
-function resetT(i){
-  fetch(`/api/timer/${i}/reset`,{method:"POST"});
-}
-function logSheet(){
-  fetch("/api/log",{method:"POST"}).then(()=>alert("נרשם ל-Google Sheet"));
+  document.getElementById("t1").innerText = d.timers[0];
+  document.getElementById("t2").innerText = d.timers[1];
 }
 
-async function startSim(){
-  const d = simDate.value;
-  const t = simTime.value;
-  await fetch("/api/sim/start",{
+setInterval(refresh,1000);
+refresh();
+
+function start(i){ fetch(`/api/timer/${i}/start`,{method:"POST"}) }
+function stop(i){ fetch(`/api/timer/${i}/stop`,{method:"POST"}) }
+function resetT(i){ fetch(`/api/timer/${i}/reset`,{method:"POST"}) }
+function log(){ fetch("/api/log",{method:"POST"}).then(()=>alert("עודכן")) }
+
+function simStart(){
+  const d = sd.value;
+  const t = st.value;
+  fetch("/api/sim/start",{
     method:"POST",
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({datetime:`${d} ${t}`})
-  });
-  refreshStatus();
+  })
 }
 
-async function stopSim(){
-  await fetch("/api/sim/stop",{method:"POST"});
-  refreshStatus();
+function simStop(){
+  fetch("/api/sim/stop",{method:"POST"})
 }
 </script>
 
