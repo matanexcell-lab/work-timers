@@ -28,7 +28,10 @@ button { font-size: 18px; padding: 10px 20px; margin: 5px }
 <button onclick="resetT(2)">Reset</button>
 
 <hr>
+<button onclick="logNow()">✏️ עדכן עכשיו Google Sheet</button>
+<div id="logResult"></div>
 
+<hr>
 <h3>סימולציה</h3>
 <input type="date" id="simDate">
 <input type="time" id="simTime">
@@ -44,10 +47,9 @@ async function refreshStatus() {
   document.getElementById("nowTitle").innerText =
     d.now_str + (d.simulation ? " (סימולציה)" : "");
 
-  if (d.simulation)
-    document.getElementById("nowTitle").classList.add("sim");
-  else
-    document.getElementById("nowTitle").classList.remove("sim");
+  d.simulation
+    ? nowTitle.classList.add("sim")
+    : nowTitle.classList.remove("sim");
 
   d.timers.forEach((t, i) => {
     document.getElementById(`timer-${i+1}`).innerText = t;
@@ -61,20 +63,20 @@ function start(i){ fetch(`/api/timer/${i}/start`,{method:"POST"}) }
 function stop(i){ fetch(`/api/timer/${i}/stop`,{method:"POST"}) }
 function resetT(i){ fetch(`/api/timer/${i}/reset`,{method:"POST"}) }
 
+async function logNow(){
+  const r = await fetch("/api/log-now",{method:"POST"});
+  const d = await r.json();
+  logResult.innerText = d.ok ? "✔ נכתב ל-Google Sheet" : "❌ " + d.error;
+}
+
 async function startSim(){
-  const d = document.getElementById("simDate").value;
-  const t = document.getElementById("simTime").value;
-  await fetch("/api/sim/start",{
-    method:"POST",
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({datetime:`${d} ${t}`})
+  await fetch("/api/sim/start",{method:"POST",headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({datetime:simDate.value+" "+simTime.value})
   });
-  refreshStatus();
 }
 
 async function stopSim(){
   await fetch("/api/sim/stop",{method:"POST"});
-  refreshStatus();
 }
 </script>
 
