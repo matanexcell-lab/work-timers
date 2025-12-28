@@ -6,31 +6,53 @@
 
 <style>
 body {
-  font-family: Arial;
+  font-family: Arial, sans-serif;
   background: #f2f2f2;
+  padding: 20px;
   text-align: center;
-  padding: 20px;
 }
-.card {
-  background: white;
-  border-radius: 10px;
-  padding: 20px;
-  margin: 15px auto;
-  max-width: 320px;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+
+h1 {
+  margin-bottom: 5px;
 }
-.timer {
-  font-size: 36px;
-  margin: 10px 0;
-}
-button {
-  font-size: 18px;
-  padding: 10px 20px;
-  margin: 5px;
-}
+
 #nowTitle {
   font-size: 22px;
+  font-weight: bold;
   margin-bottom: 20px;
+}
+
+.sim {
+  color: red;
+}
+
+.card {
+  background: white;
+  border-radius: 12px;
+  padding: 22px;
+  margin: 18px auto;
+  max-width: 360px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+.timer {
+  font-size: 38px;
+  margin: 12px 0;
+}
+
+button {
+  font-size: 18px;
+  padding: 12px 22px;
+  margin: 6px;
+  cursor: pointer;
+}
+
+.sim-box {
+  background: #fff;
+  padding: 18px;
+  border-radius: 12px;
+  max-width: 360px;
+  margin: 20px auto;
 }
 </style>
 </head>
@@ -40,50 +62,111 @@ button {
 <h1>⏱ Work Timers</h1>
 <div id="nowTitle">טוען...</div>
 
+<!-- TIMER 1 -->
 <div class="card">
   <h2>טיימר 1</h2>
   <div class="timer" id="timer-1">00:00:00</div>
-  <button onclick="start(1)">▶ Start</button>
-  <button onclick="stop(1)">⏸ Stop</button>
-  <button onclick="resetT(1)">🔄 Reset</button>
+  <button onclick="startTimer(1)">▶ Start</button>
+  <button onclick="stopTimer(1)">⏸ Stop</button>
+  <button onclick="resetTimer(1)">🔄 Reset</button>
 </div>
 
+<!-- TIMER 2 -->
 <div class="card">
   <h2>טיימר 2</h2>
   <div class="timer" id="timer-2">00:00:00</div>
-  <button onclick="start(2)">▶ Start</button>
-  <button onclick="stop(2)">⏸ Stop</button>
-  <button onclick="resetT(2)">🔄 Reset</button>
+  <button onclick="startTimer(2)">▶ Start</button>
+  <button onclick="stopTimer(2)">⏸ Stop</button>
+  <button onclick="resetTimer(2)">🔄 Reset</button>
 </div>
 
+<!-- GOOGLE SHEET -->
 <div class="card">
   <button onclick="logNow()">✏️ עדכון ידני ל-Google Sheet</button>
 </div>
 
-<script>
-async function refreshStatus(){
-  const r = await fetch("/api/status");
-  const d = await r.json();
+<!-- SIMULATION -->
+<div class="sim-box">
+  <h3>🧪 סימולציה</h3>
+  <input type="date" id="simDate"><br><br>
+  <input type="time" id="simTime"><br><br>
+  <button onclick="startSim()">הפעל סימולציה</button>
+  <button onclick="stopSim()">כבה סימולציה</button>
+</div>
 
-  document.getElementById("nowTitle").innerText = d.now_str;
-  document.getElementById("timer-1").innerText = d.timers[0];
-  document.getElementById("timer-2").innerText = d.timers[1];
+<script>
+const BASE = window.location.origin;
+
+// ================= STATUS =================
+async function refreshStatus(){
+  try {
+    const r = await fetch(`${BASE}/api/status`);
+    const d = await r.json();
+
+    const title = document.getElementById("nowTitle");
+    title.innerText = d.now_str + (d.simulation ? " (סימולציה)" : "");
+    title.className = d.simulation ? "sim" : "";
+
+    d.timers.forEach((t, i) => {
+      document.getElementById(`timer-${i+1}`).innerText = t;
+    });
+  } catch(e){
+    console.error("Status error:", e);
+  }
 }
 
 setInterval(refreshStatus, 1000);
 refreshStatus();
 
-function start(i){ fetch(`/api/timer/${i}/start`, {method:"POST"}) }
-function stop(i){ fetch(`/api/timer/${i}/stop`, {method:"POST"}) }
-function resetT(i){ fetch(`/api/timer/${i}/reset`, {method:"POST"}) }
+// ================= TIMER ACTIONS =================
+async function startTimer(i){
+  const r = await fetch(`${BASE}/api/timer/${i}/start`, { method: "POST" });
+  console.log("START", await r.json());
+  refreshStatus();
+}
 
+async function stopTimer(i){
+  await fetch(`${BASE}/api/timer/${i}/stop`, { method: "POST" });
+  refreshStatus();
+}
+
+async function resetTimer(i){
+  await fetch(`${BASE}/api/timer/${i}/reset`, { method: "POST" });
+  refreshStatus();
+}
+
+// ================= GOOGLE SHEET =================
 async function logNow(){
-  const r = await fetch("/api/log", {method:"POST"});
-  if(r.ok){
-    alert("✅ עודכן בהצלחה ב-Google Sheet");
-  } else {
+  try {
+    const r = await fetch(`${BASE}/api/log-now`, { method: "POST" });
+    const d = await r.json();
+    alert("✅ עודכן ב-Google Sheet");
+    console.log("LOG:", d);
+  } catch(e){
     alert("❌ שגיאה בעדכון");
   }
+}
+
+// ================= SIMULATION =================
+async function startSim(){
+  const d = simDate.value;
+  const t = simTime.value;
+  if(!d || !t){
+    alert("בחר תאריך ושעה");
+    return;
+  }
+
+  await fetch(`${BASE}/api/sim/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ datetime: `${d} ${t}` })
+  });
+  refreshStatus();
+}
+
+async function stopSim(){
+  await fetch(`${BASE}/api/sim/stop`, { method: "POST" });
+  refreshStatus();
 }
 </script>
 
