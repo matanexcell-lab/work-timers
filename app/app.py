@@ -1,203 +1,161 @@
-import os, json, time, threading
+from flask import Flask, render_template, jsonify, request
 from datetime import datetime, timedelta
-import pytz
-
-from flask import Flask, jsonify, request, render_template
+import time
 import gspread
 from google.oauth2.service_account import Credentials
 
-# =========================
-# CONFIG
-# =========================
-TZ = pytz.timezone("Asia/Jerusalem")
-RESET_HOUR = 5
-TIMER_COUNT = 2
+app = Flask(__name__)
 
+# =======================
+# Google Sheets
+# =======================
 SPREADSHEET_NAME = "Time Tracking"
 WORKSHEET_NAME = "Log"
 
-# =========================
-# APP
-# =========================
-app = Flask(__name__)
-
-# =========================
-# GOOGLE SHEETS
-# =========================
 def get_ws():
-    raw = os.getenv("GOOGLE_CREDS_JSON")
-    info = json.loads(raw)
-
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    creds = Credentials.from_service_account_info(info, scopes=scopes)
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds = Credentials.from_service_account_file(
+        "credentials.json", scopes=scopes
+    )
     gc = gspread.authorize(creds)
-    return gc.open(SPREADSHEET_NAME).worksheet(WORKSHEET_NAME)
+    sh = gc.open(SPREADSHEET_NAME)
+    return sh.worksheet(WORKSHEET_NAME)
 
-# =========================
-# STATE
-# =========================
-timers = [{"running": False, "start": None, "accum": 0} for _ in range(TIMER_COUNT)]
+# =======================
+# State
+# =======================
+timers = [0, 0]
+running = [False, False]
+last_tick = [None, None]
 
 simulation_on = False
-simulation_now = None
+sim_datetime = None
 
-last_reset_day = None
-start_logged_day = None
+last_workday = None
+started_today = False
 
-# =========================
-# TIME
-# =========================
+# =======================
+# Time helpers
+# =======================
 def now():
-    if simulation_on and simulation_now:
-        return simulation_now
-    return datetime.now(TZ)
+    return sim_datetime if simulation_on else datetime.now()
 
-# =========================
-# DAILY RESET
-# =========================
-def check_daily_reset(t):
-    global last_reset_day, start_logged_day
+def get_workday(dt):
+    if dt.hour < 5:
+        return (dt - timedelta(days=1)).date()
+    return dt.date()
 
-    day_key = t.strftime("%Y-%m-%d")
+def check_new_day():
+    global last_workday, timers, started_today
 
-    if t.hour >= RESET_HOUR and last_reset_day != day_key:
-        for tm in timers:
-            tm["running"] = False
-            tm["start"] = None
-            tm["accum"] = 0
+    wd = get_workday(now())
+    if last_workday != wd:
+        timers = [0, 0]
+        started_today = False
+        last_workday = wd
 
-        last_reset_day = day_key
-        start_logged_day = None
-        print("🔄 Reset at 05:00")
+# =======================
+# Tick timers
+# =======================
+def tick():
+    for i in range(2):
+        if running[i]:
+            n = now()
+            if last_tick[i]:
+                timers[i] += int((n - last_tick[i]).total_seconds())
+            last_tick[i] = n
 
-# =========================
-# START TIME LOG
-# =========================
-def log_start_time(t):
-    global start_logged_day
+# =======================
+# Google Sheet helpers
+# =======================
+def col_for_date(ws, date_str):
+    row = ws.row_values(3)
+    for i, v in enumerate(row):
+        if v == date_str:
+            return i + 1
+    raise Exception("Date not found in sheet")
 
-    day_key = t.strftime("%Y-%m-%d")
-    if start_logged_day == day_key:
-        return
-
+def write_start_time():
     ws = get_ws()
-    date_str = t.strftime("%d/%m/%Y")
-    time_str = t.strftime("%H:%M")
+    date_str = get_workday(now()).strftime("%d/%m/%Y")
+    col = col_for_date(ws, date_str)
+    ws.update_cell(4, col, now().strftime("%H:%M"))
 
-    dates = ws.row_values(3)
-    if date_str not in dates:
-        print("❌ Date not found:", date_str)
-        return
+def write_total():
+    ws = get_ws()
+    date_str = get_workday(now()).strftime("%d/%m/%Y")
+    col = col_for_date(ws, date_str)
+    total_sec = sum(timers)
+    h = total_sec // 3600
+    m = (total_sec % 3600) // 60
+    ws.update_cell(6, col, f"{h:02}:{m:02}")
 
-    col = dates.index(date_str) + 1
-    ws.update_cell(4, col, time_str)
-
-    start_logged_day = day_key
-    print("🕔 Start logged:", date_str, time_str)
-
-# =========================
-# BACKGROUND TICK
-# =========================
-def ticker():
-    while True:
-        t = now()
-        check_daily_reset(t)
-
-        for tm in timers:
-            if tm["running"]:
-                tm["accum"] += 1
-
-        time.sleep(1)
-
-threading.Thread(target=ticker, daemon=True).start()
-
-# =========================
-# HELPERS
-# =========================
-def fmt(sec):
-    return str(timedelta(seconds=sec))
-
-# =========================
-# ROUTES
-# =========================
+# =======================
+# Routes
+# =======================
 @app.route("/")
-def ui():
+def index():
     return render_template("index.html")
 
 @app.route("/api/status")
 def status():
-    t = now()
+    check_new_day()
+    tick()
     return jsonify({
-        "now_str": t.strftime("%d/%m/%Y %H:%M:%S"),
+        "now_str": now().strftime("%d/%m/%Y %H:%M:%S"),
         "simulation": simulation_on,
-        "timers": [fmt(tm["accum"]) for tm in timers]
+        "timers": [time.strftime("%H:%M:%S", time.gmtime(t)) for t in timers]
     })
 
 @app.route("/api/timer/<int:i>/start", methods=["POST"])
 def start_timer(i):
-    t = now()
-    idx = i - 1
+    global started_today
+    check_new_day()
+    tick()
 
-    if not timers[idx]["running"]:
-        if t.hour >= RESET_HOUR:
-            log_start_time(t)
+    if not started_today:
+        write_start_time()
+        started_today = True
 
-        timers[idx]["running"] = True
-        timers[idx]["start"] = t
-
-    return jsonify(ok=True)
+    running[i-1] = True
+    last_tick[i-1] = now()
+    return "", 204
 
 @app.route("/api/timer/<int:i>/stop", methods=["POST"])
 def stop_timer(i):
-    timers[i-1]["running"] = False
-    return jsonify(ok=True)
+    tick()
+    running[i-1] = False
+    last_tick[i-1] = None
+    return "", 204
 
 @app.route("/api/timer/<int:i>/reset", methods=["POST"])
 def reset_timer(i):
-    timers[i-1]["running"] = False
-    timers[i-1]["start"] = None
-    timers[i-1]["accum"] = 0
-    return jsonify(ok=True)
+    timers[i-1] = 0
+    running[i-1] = False
+    last_tick[i-1] = None
+    return "", 204
+
+@app.route("/api/log", methods=["POST"])
+def log_sheet():
+    tick()
+    write_total()
+    return jsonify({"logged": True})
 
 @app.route("/api/sim/start", methods=["POST"])
 def sim_start():
-    global simulation_on, simulation_now
+    global simulation_on, sim_datetime
     data = request.json
-    simulation_now = TZ.localize(
-        datetime.strptime(data["datetime"], "%Y-%m-%d %H:%M")
-    )
+    sim_datetime = datetime.strptime(data["datetime"], "%Y-%m-%d %H:%M")
     simulation_on = True
-    return jsonify(ok=True)
+    return "", 204
 
 @app.route("/api/sim/stop", methods=["POST"])
 def sim_stop():
-    global simulation_on, simulation_now
+    global simulation_on, sim_datetime
     simulation_on = False
-    simulation_now = None
-    return jsonify(ok=True)
+    sim_datetime = None
+    return "", 204
 
-@app.route("/api/log", methods=["POST"])
-def log_google():
-    ws = get_ws()
-    t = now()
-    date_str = t.strftime("%d/%m/%Y")
-    dates = ws.row_values(3)
-
-    if date_str not in dates:
-        return jsonify(error="date not found")
-
-    col = dates.index(date_str) + 1
-
-    for i, tm in enumerate(timers):
-        ws.update_cell(7 + i, col, fmt(tm["accum"]))
-
-    return jsonify(logged=True)
-
-# =========================
-# RUN
-# =========================
+# =======================
 if __name__ == "__main__":
-    app.run()
+    app.run(debug=True)
