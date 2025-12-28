@@ -3,171 +3,69 @@
 <head>
 <meta charset="UTF-8">
 <title>Work Timers</title>
-
 <style>
-body {
-  font-family: Arial, sans-serif;
-  background: #f2f2f2;
-  padding: 20px;
-  text-align: center;
-}
-
-h1 {
-  margin-bottom: 5px;
-}
-
-#nowTitle {
-  font-size: 22px;
-  font-weight: bold;
-  margin-bottom: 20px;
-}
-
-.sim {
-  color: red;
-}
-
-.card {
-  background: white;
-  border-radius: 12px;
-  padding: 22px;
-  margin: 18px auto;
-  max-width: 360px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-}
-
-.timer {
-  font-size: 38px;
-  margin: 12px 0;
-}
-
-button {
-  font-size: 18px;
-  padding: 12px 22px;
-  margin: 6px;
-  cursor: pointer;
-}
-
-.sim-box {
-  background: #fff;
-  padding: 18px;
-  border-radius: 12px;
-  max-width: 360px;
-  margin: 20px auto;
-}
+body { font-family: Arial; background:#f2f2f2; text-align:center; padding:20px }
+.card { background:white; padding:20px; margin:15px auto; max-width:360px; border-radius:12px }
+.timer { font-size:36px }
+.sim { color:red }
 </style>
 </head>
-
 <body>
 
-<h1>⏱ Work Timers</h1>
+<h2>⏱ Work Timers</h2>
 <div id="nowTitle">טוען...</div>
 
-<!-- TIMER 1 -->
 <div class="card">
-  <h2>טיימר 1</h2>
-  <div class="timer" id="timer-1">00:00:00</div>
-  <button onclick="startTimer(1)">▶ Start</button>
-  <button onclick="stopTimer(1)">⏸ Stop</button>
-  <button onclick="resetTimer(1)">🔄 Reset</button>
+  <h3>טיימר 1</h3>
+  <div class="timer" id="t1">00:00:00</div>
+  <button onclick="cmd(1,'start')">Start</button>
+  <button onclick="cmd(1,'stop')">Stop</button>
+  <button onclick="cmd(1,'reset')">Reset</button>
 </div>
 
-<!-- TIMER 2 -->
 <div class="card">
-  <h2>טיימר 2</h2>
-  <div class="timer" id="timer-2">00:00:00</div>
-  <button onclick="startTimer(2)">▶ Start</button>
-  <button onclick="stopTimer(2)">⏸ Stop</button>
-  <button onclick="resetTimer(2)">🔄 Reset</button>
+  <h3>טיימר 2</h3>
+  <div class="timer" id="t2">00:00:00</div>
+  <button onclick="cmd(2,'start')">Start</button>
+  <button onclick="cmd(2,'stop')">Stop</button>
+  <button onclick="cmd(2,'reset')">Reset</button>
 </div>
 
-<!-- GOOGLE SHEET -->
 <div class="card">
   <button onclick="logNow()">✏️ עדכון ידני ל-Google Sheet</button>
 </div>
 
-<!-- SIMULATION -->
-<div class="sim-box">
+<div class="card">
   <h3>🧪 סימולציה</h3>
-  <input type="date" id="simDate"><br><br>
-  <input type="time" id="simTime"><br><br>
-  <button onclick="startSim()">הפעל סימולציה</button>
-  <button onclick="stopSim()">כבה סימולציה</button>
+  <input type="date" id="sd"><br><br>
+  <input type="time" id="st"><br><br>
+  <button onclick="startSim()">הפעל</button>
+  <button onclick="stopSim()">כבה</button>
 </div>
 
 <script>
-const BASE = window.location.origin;
-
-// ================= STATUS =================
-async function refreshStatus(){
-  try {
-    const r = await fetch(`${BASE}/api/status`);
-    const d = await r.json();
-
-    const title = document.getElementById("nowTitle");
-    title.innerText = d.now_str + (d.simulation ? " (סימולציה)" : "");
-    title.className = d.simulation ? "sim" : "";
-
-    d.timers.forEach((t, i) => {
-      document.getElementById(`timer-${i+1}`).innerText = t;
-    });
-  } catch(e){
-    console.error("Status error:", e);
-  }
+async function refresh(){
+  const r = await fetch("/api/status");
+  const d = await r.json();
+  const t = document.getElementById("nowTitle");
+  t.innerText = d.now_str + (d.simulation ? " (סימולציה)" : "");
+  t.className = d.simulation ? "sim" : "";
+  document.getElementById("t1").innerText = d.timers[0];
+  document.getElementById("t2").innerText = d.timers[1];
 }
+setInterval(refresh,1000); refresh();
 
-setInterval(refreshStatus, 1000);
-refreshStatus();
+function cmd(i,a){ fetch(`/api/timer/${i}/${a}`,{method:"POST"}); }
+function logNow(){ fetch("/api/log",{method:"POST"}).then(()=>alert("עודכן")); }
 
-// ================= TIMER ACTIONS =================
-async function startTimer(i){
-  const r = await fetch(`${BASE}/api/timer/${i}/start`, { method: "POST" });
-  console.log("START", await r.json());
-  refreshStatus();
-}
-
-async function stopTimer(i){
-  await fetch(`${BASE}/api/timer/${i}/stop`, { method: "POST" });
-  refreshStatus();
-}
-
-async function resetTimer(i){
-  await fetch(`${BASE}/api/timer/${i}/reset`, { method: "POST" });
-  refreshStatus();
-}
-
-// ================= GOOGLE SHEET =================
-async function logNow(){
-  try {
-    const r = await fetch(`${BASE}/api/log-now`, { method: "POST" });
-    const d = await r.json();
-    alert("✅ עודכן ב-Google Sheet");
-    console.log("LOG:", d);
-  } catch(e){
-    alert("❌ שגיאה בעדכון");
-  }
-}
-
-// ================= SIMULATION =================
-async function startSim(){
-  const d = simDate.value;
-  const t = simTime.value;
-  if(!d || !t){
-    alert("בחר תאריך ושעה");
-    return;
-  }
-
-  await fetch(`${BASE}/api/sim/start`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ datetime: `${d} ${t}` })
+function startSim(){
+  fetch("/api/sim/start",{
+    method:"POST",
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({datetime: sd.value+" "+st.value})
   });
-  refreshStatus();
 }
-
-async function stopSim(){
-  await fetch(`${BASE}/api/sim/stop`, { method: "POST" });
-  refreshStatus();
-}
+function stopSim(){ fetch("/api/sim/stop",{method:"POST"}); }
 </script>
 
 </body>
