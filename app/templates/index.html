@@ -13,20 +13,24 @@ body {
 }
 .card {
   background: white;
+  border-radius: 10px;
   padding: 20px;
   margin: 15px auto;
-  max-width: 300px;
-  border-radius: 10px;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+  max-width: 320px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
 }
 .timer {
-  font-size: 32px;
+  font-size: 36px;
   margin: 10px 0;
 }
 button {
   font-size: 18px;
-  padding: 8px 18px;
+  padding: 10px 20px;
   margin: 5px;
+}
+#nowTitle {
+  font-size: 22px;
+  margin-bottom: 20px;
 }
 </style>
 </head>
@@ -34,11 +38,11 @@ button {
 <body>
 
 <h1>⏱ Work Timers</h1>
-<div id="now">טוען...</div>
+<div id="nowTitle">טוען...</div>
 
 <div class="card">
   <h2>טיימר 1</h2>
-  <div class="timer" id="t1">00:00:00</div>
+  <div class="timer" id="timer-1">00:00:00</div>
   <button onclick="start(1)">▶ Start</button>
   <button onclick="stop(1)">⏸ Stop</button>
   <button onclick="resetT(1)">🔄 Reset</button>
@@ -46,27 +50,41 @@ button {
 
 <div class="card">
   <h2>טיימר 2</h2>
-  <div class="timer" id="t2">00:00:00</div>
+  <div class="timer" id="timer-2">00:00:00</div>
   <button onclick="start(2)">▶ Start</button>
   <button onclick="stop(2)">⏸ Stop</button>
   <button onclick="resetT(2)">🔄 Reset</button>
 </div>
 
+<div class="card">
+  <button onclick="logNow()">✏️ עדכון ידני ל-Google Sheet</button>
+</div>
+
 <script>
-async function refresh(){
+async function refreshStatus(){
   const r = await fetch("/api/status");
   const d = await r.json();
-  document.getElementById("now").innerText = d.now_str;
-  document.getElementById("t1").innerText = d.timers[0];
-  document.getElementById("t2").innerText = d.timers[1];
+
+  document.getElementById("nowTitle").innerText = d.now_str;
+  document.getElementById("timer-1").innerText = d.timers[0];
+  document.getElementById("timer-2").innerText = d.timers[1];
 }
 
-setInterval(refresh, 1000);
-refresh();
+setInterval(refreshStatus, 1000);
+refreshStatus();
 
-function start(i){ fetch(`/api/timer/${i}/start`, {method:"POST"}); }
-function stop(i){ fetch(`/api/timer/${i}/stop`, {method:"POST"}); }
-function resetT(i){ fetch(`/api/timer/${i}/reset`, {method:"POST"}); }
+function start(i){ fetch(`/api/timer/${i}/start`, {method:"POST"}) }
+function stop(i){ fetch(`/api/timer/${i}/stop`, {method:"POST"}) }
+function resetT(i){ fetch(`/api/timer/${i}/reset`, {method:"POST"}) }
+
+async function logNow(){
+  const r = await fetch("/api/log", {method:"POST"});
+  if(r.ok){
+    alert("✅ עודכן בהצלחה ב-Google Sheet");
+  } else {
+    alert("❌ שגיאה בעדכון");
+  }
+}
 </script>
 
 </body>
