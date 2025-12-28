@@ -6,7 +6,7 @@
 <style>
 body { font-family: Arial; padding: 20px }
 button { font-size: 18px; padding: 10px 20px; margin: 5px }
-.timer { font-size: 32px; margin: 10px 0 }
+.timer { font-size: 30px; margin: 10px 0 }
 #nowTitle { font-size: 22px; font-weight: bold; margin-bottom: 15px }
 .sim { color: red }
 </style>
@@ -28,10 +28,11 @@ button { font-size: 18px; padding: 10px 20px; margin: 5px }
 <button onclick="resetT(2)">Reset</button>
 
 <hr>
-<button onclick="logNow()">✏️ עדכן עכשיו Google Sheet</button>
-<div id="logResult"></div>
+
+<button onclick="logSheet()">✏️ עדכן Google Sheet</button>
 
 <hr>
+
 <h3>סימולציה</h3>
 <input type="date" id="simDate">
 <input type="time" id="simTime">
@@ -44,39 +45,45 @@ async function refreshStatus() {
   const r = await fetch("/api/status");
   const d = await r.json();
 
-  document.getElementById("nowTitle").innerText =
-    d.now_str + (d.simulation ? " (סימולציה)" : "");
+  const title = document.getElementById("nowTitle");
+  title.innerText = d.now_str + (d.simulation ? " (סימולציה)" : "");
+  title.className = d.simulation ? "sim" : "";
 
-  d.simulation
-    ? nowTitle.classList.add("sim")
-    : nowTitle.classList.remove("sim");
-
-  d.timers.forEach((t, i) => {
+  d.timers.forEach((t,i)=>{
     document.getElementById(`timer-${i+1}`).innerText = t;
   });
 }
 
-setInterval(refreshStatus, 1000);
+setInterval(refreshStatus,1000);
 refreshStatus();
 
-function start(i){ fetch(`/api/timer/${i}/start`,{method:"POST"}) }
-function stop(i){ fetch(`/api/timer/${i}/stop`,{method:"POST"}) }
-function resetT(i){ fetch(`/api/timer/${i}/reset`,{method:"POST"}) }
-
-async function logNow(){
-  const r = await fetch("/api/log-now",{method:"POST"});
-  const d = await r.json();
-  logResult.innerText = d.ok ? "✔ נכתב ל-Google Sheet" : "❌ " + d.error;
+function start(i){
+  fetch(`/api/timer/${i}/start`,{method:"POST"});
+}
+function stop(i){
+  fetch(`/api/timer/${i}/stop`,{method:"POST"});
+}
+function resetT(i){
+  fetch(`/api/timer/${i}/reset`,{method:"POST"});
+}
+function logSheet(){
+  fetch("/api/log",{method:"POST"}).then(()=>alert("נרשם ל-Google Sheet"));
 }
 
 async function startSim(){
-  await fetch("/api/sim/start",{method:"POST",headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({datetime:simDate.value+" "+simTime.value})
+  const d = simDate.value;
+  const t = simTime.value;
+  await fetch("/api/sim/start",{
+    method:"POST",
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({datetime:`${d} ${t}`})
   });
+  refreshStatus();
 }
 
 async function stopSim(){
   await fetch("/api/sim/stop",{method:"POST"});
+  refreshStatus();
 }
 </script>
 
