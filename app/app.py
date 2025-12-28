@@ -1,132 +1,203 @@
-import os, json
+import os, json, time, threading
 from datetime import datetime, timedelta
 import pytz
-from flask import Flask, jsonify, request, render_template
 
-# ================= CONFIG =================
+from flask import Flask, jsonify, request, render_template
+import gspread
+from google.oauth2.service_account import Credentials
+
+# =========================
+# CONFIG
+# =========================
 TZ = pytz.timezone("Asia/Jerusalem")
+RESET_HOUR = 5
 TIMER_COUNT = 2
 
-# ================= GOOGLE SHEETS =================
-def gs_connect():
-    import gspread
-    from google.oauth2.service_account import Credentials
+SPREADSHEET_NAME = "Time Tracking"
+WORKSHEET_NAME = "Log"
 
-    info = json.loads(os.environ["GOOGLE_CREDS_JSON"])
+# =========================
+# APP
+# =========================
+app = Flask(__name__)
+
+# =========================
+# GOOGLE SHEETS
+# =========================
+def get_ws():
+    raw = os.getenv("GOOGLE_CREDS_JSON")
+    info = json.loads(raw)
+
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/drive"
     ]
     creds = Credentials.from_service_account_info(info, scopes=scopes)
     gc = gspread.authorize(creds)
-    sh = gc.open("Time Tracking")
-    return sh.worksheet("Log")
+    return gc.open(SPREADSHEET_NAME).worksheet(WORKSHEET_NAME)
 
-WS = gs_connect()
+# =========================
+# STATE
+# =========================
+timers = [{"running": False, "start": None, "accum": 0} for _ in range(TIMER_COUNT)]
 
-# ================= STATE =================
-timers = [
-    {"running": False, "start": None, "accum": 0}
-    for _ in range(TIMER_COUNT)
-]
+simulation_on = False
+simulation_now = None
 
-sim_enabled = False
-sim_now = None
+last_reset_day = None
+start_logged_day = None
 
-# ================= TIME =================
+# =========================
+# TIME
+# =========================
 def now():
-    if sim_enabled:
-        return sim_now
+    if simulation_on and simulation_now:
+        return simulation_now
     return datetime.now(TZ)
 
+# =========================
+# DAILY RESET
+# =========================
+def check_daily_reset(t):
+    global last_reset_day, start_logged_day
+
+    day_key = t.strftime("%Y-%m-%d")
+
+    if t.hour >= RESET_HOUR and last_reset_day != day_key:
+        for tm in timers:
+            tm["running"] = False
+            tm["start"] = None
+            tm["accum"] = 0
+
+        last_reset_day = day_key
+        start_logged_day = None
+        print("🔄 Reset at 05:00")
+
+# =========================
+# START TIME LOG
+# =========================
+def log_start_time(t):
+    global start_logged_day
+
+    day_key = t.strftime("%Y-%m-%d")
+    if start_logged_day == day_key:
+        return
+
+    ws = get_ws()
+    date_str = t.strftime("%d/%m/%Y")
+    time_str = t.strftime("%H:%M")
+
+    dates = ws.row_values(3)
+    if date_str not in dates:
+        print("❌ Date not found:", date_str)
+        return
+
+    col = dates.index(date_str) + 1
+    ws.update_cell(4, col, time_str)
+
+    start_logged_day = day_key
+    print("🕔 Start logged:", date_str, time_str)
+
+# =========================
+# BACKGROUND TICK
+# =========================
+def ticker():
+    while True:
+        t = now()
+        check_daily_reset(t)
+
+        for tm in timers:
+            if tm["running"]:
+                tm["accum"] += 1
+
+        time.sleep(1)
+
+threading.Thread(target=ticker, daemon=True).start()
+
+# =========================
+# HELPERS
+# =========================
 def fmt(sec):
-    return str(timedelta(seconds=int(sec)))
+    return str(timedelta(seconds=sec))
 
-# ================= ROUTES =================
-app = Flask(__name__)
-
+# =========================
+# ROUTES
+# =========================
 @app.route("/")
-def index():
+def ui():
     return render_template("index.html")
 
 @app.route("/api/status")
 def status():
     t = now()
-    values = []
-    for tm in timers:
-        total = tm["accum"]
-        if tm["running"]:
-            total += int((t - tm["start"]).total_seconds())
-        values.append(fmt(total))
-
-    return jsonify(
-        now_str=t.strftime("%d/%m/%Y %H:%M:%S"),
-        simulation=sim_enabled,
-        timers=values
-    )
+    return jsonify({
+        "now_str": t.strftime("%d/%m/%Y %H:%M:%S"),
+        "simulation": simulation_on,
+        "timers": [fmt(tm["accum"]) for tm in timers]
+    })
 
 @app.route("/api/timer/<int:i>/start", methods=["POST"])
-def timer_start(i):
-    t = timers[i-1]
-    if not t["running"]:
-        t["running"] = True
-        t["start"] = now()
+def start_timer(i):
+    t = now()
+    idx = i - 1
+
+    if not timers[idx]["running"]:
+        if t.hour >= RESET_HOUR:
+            log_start_time(t)
+
+        timers[idx]["running"] = True
+        timers[idx]["start"] = t
+
     return jsonify(ok=True)
 
 @app.route("/api/timer/<int:i>/stop", methods=["POST"])
-def timer_stop(i):
-    t = timers[i-1]
-    if t["running"]:
-        t["accum"] += int((now() - t["start"]).total_seconds())
-        t["running"] = False
-        t["start"] = None
+def stop_timer(i):
+    timers[i-1]["running"] = False
     return jsonify(ok=True)
 
 @app.route("/api/timer/<int:i>/reset", methods=["POST"])
-def timer_reset(i):
-    timers[i-1] = {"running": False, "start": None, "accum": 0}
+def reset_timer(i):
+    timers[i-1]["running"] = False
+    timers[i-1]["start"] = None
+    timers[i-1]["accum"] = 0
     return jsonify(ok=True)
 
-# ================= SIMULATION =================
 @app.route("/api/sim/start", methods=["POST"])
 def sim_start():
-    global sim_enabled, sim_now
+    global simulation_on, simulation_now
     data = request.json
-    sim_now = TZ.localize(datetime.strptime(data["datetime"], "%Y-%m-%d %H:%M"))
-    sim_enabled = True
+    simulation_now = TZ.localize(
+        datetime.strptime(data["datetime"], "%Y-%m-%d %H:%M")
+    )
+    simulation_on = True
     return jsonify(ok=True)
-
-@app.route
 
 @app.route("/api/sim/stop", methods=["POST"])
 def sim_stop():
-    global sim_enabled
-    # עצירת כל הטיימרים כדי למנוע קפיצות
-    for t in timers:
-        t["running"] = False
-        t["start"] = None
-    sim_enabled = False
+    global simulation_on, simulation_now
+    simulation_on = False
+    simulation_now = None
     return jsonify(ok=True)
 
-# ================= GOOGLE SHEET =================
 @app.route("/api/log", methods=["POST"])
-def log_to_sheet():
+def log_google():
+    ws = get_ws()
     t = now()
-    col = None
-    headers = WS.row_values(3)
     date_str = t.strftime("%d/%m/%Y")
+    dates = ws.row_values(3)
 
-    if date_str in headers:
-        col = headers.index(date_str) + 1
-    else:
-        col = len(headers) + 1
-        WS.update_cell(3, col, date_str)
+    if date_str not in dates:
+        return jsonify(error="date not found")
+
+    col = dates.index(date_str) + 1
 
     for i, tm in enumerate(timers):
-        WS.update_cell(7+i, col, fmt(tm["accum"]))
+        ws.update_cell(7 + i, col, fmt(tm["accum"]))
 
     return jsonify(logged=True)
 
-# ================= RUN =================
+# =========================
+# RUN
+# =========================
 if __name__ == "__main__":
     app.run()
