@@ -1,54 +1,56 @@
 import os, json, time, threading
 from datetime import datetime, timedelta
 import pytz
+from flask import Flask, jsonify, render_template, request
 
-from flask import Flask, jsonify, request, render_template
-
-# =====================
-# CONFIG
-# =====================
+# ================= CONFIG =================
 TZ = pytz.timezone("Asia/Jerusalem")
 
 TIMER_COUNT = 2
-RESET_HOUR = 5
 FIRST_HOUR = 8
 LAST_HOUR = 23
+RESET_HOUR = 5
 
 SPREADSHEET_NAME = "Time Tracking"
 WORKSHEET_NAME = "Log"
 
-# =====================
-# FLASK
-# =====================
-app = Flask(__name__, template_folder="../templates")
+# ================= FLASK =================
+app = Flask(__name__, template_folder="templates")
 
-# =====================
-# SIMULATION STATE
-# =====================
-simulation_enabled = False
-simulated_now = None
+# ================= GOOGLE SHEETS =================
+def gs_connect():
+    import gspread
+    from google.oauth2.service_account import Credentials
 
-# =====================
-# TIMERS STATE
-# =====================
-timers = [
-    {"running": False, "start": None, "accum": 0}
-    for _ in range(TIMER_COUNT)
-]
+    raw = os.getenv("GOOGLE_CREDS_JSON")
+    if not raw:
+        raise RuntimeError("Missing GOOGLE_CREDS_JSON")
 
-current_workday = None
+    info = json.loads(raw)
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(info, scopes=scopes)
+    gc = gspread.authorize(creds)
+    sh = gc.open(SPREADSHEET_NAME)
+    return sh.worksheet(WORKSHEET_NAME)
+
+WS = gs_connect()
+
+# ================= STATE =================
+timers = [{"running": False, "start": None, "accum": 0} for _ in range(TIMER_COUNT)]
 last_logged_hour = None
-start_logged = False
+current_workday = None
+start_written = False
 
-# =====================
-# TIME HELPERS
-# =====================
+# סימולציה
+sim_enabled = False
+sim_datetime = None
+
+# ================= HELPERS =================
 def now():
-    global simulated_now
-    if simulation_enabled and simulated_now:
-        simulated_now += timedelta(seconds=1)
-        return simulated_now
-    return datetime.now(TZ)
+    return sim_datetime if sim_enabled and sim_datetime else datetime.now(TZ)
 
 def seconds_to_hms(sec):
     h = sec // 3600
@@ -68,32 +70,13 @@ def workday_key(dt):
         dt -= timedelta(days=1)
     return dt.strftime("%d/%m/%Y")
 
-# =====================
-# GOOGLE SHEETS
-# =====================
-def gs_connect():
-    import gspread
-    from google.oauth2.service_account import Credentials
-
-    raw = os.getenv("GOOGLE_CREDS_JSON")
-    info = json.loads(raw)
-
-    creds = Credentials.from_service_account_info(
-        info,
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ],
-    )
-    gc = gspread.authorize(creds)
-    return gc.open(SPREADSHEET_NAME).worksheet(WORKSHEET_NAME)
-
-WS = gs_connect()
-
+# ================= GOOGLE WRITE =================
 def write_hour(hour, dt):
+    global start_written
+
     date_str = workday_key(dt)
 
-    # חיפוש עמוד לפי תאריך בשורה 3
+    # חיפוש תאריך בשורה 3 (או יצירה)
     headers = WS.row_values(3)
     if date_str in headers:
         col = headers.index(date_str) + 1
@@ -101,43 +84,42 @@ def write_hour(hour, dt):
         col = len(headers) + 1
         WS.update_cell(3, col, date_str)
 
+    # שעת התחלה – פעם אחת ביום
+    if not start_written:
+        WS.update_cell(4, col, dt.strftime("%H:%M"))
+        start_written = True
+
     row = 7 + (hour - FIRST_HOUR)
 
-    values = [
-        seconds_to_hms(effective_seconds(timers[i], dt))
-        for i in range(TIMER_COUNT)
-    ]
+    for i in range(TIMER_COUNT):
+        WS.update_cell(row, col + i, seconds_to_hms(effective_seconds(timers[i], dt)))
 
-    for i, v in enumerate(values):
-        WS.update_cell(row, col + i, v)
-
-# =====================
-# BACKGROUND WORKER
-# =====================
-def worker():
-    global current_workday, last_logged_hour, start_logged
+# ================= BACKGROUND =================
+def background_worker():
+    global current_workday, last_logged_hour, start_written
 
     while True:
         dt = now()
         wd = workday_key(dt)
 
-        if wd != current_workday:
+        if current_workday != wd:
             current_workday = wd
             last_logged_hour = None
-            start_logged = False
+            start_written = False
             for t in timers:
                 t.update({"running": False, "start": None, "accum": 0})
 
-        if dt.minute == 0 and FIRST_HOUR <= dt.hour <= LAST_HOUR:
-            if dt.hour != last_logged_hour:
-                write_hour(dt.hour, dt)
-                last_logged_hour = dt.hour
+        if (
+            dt.minute == 0
+            and FIRST_HOUR <= dt.hour <= LAST_HOUR
+            and dt.hour != last_logged_hour
+        ):
+            write_hour(dt.hour, dt)
+            last_logged_hour = dt.hour
 
-        time.sleep(1)
+        time.sleep(30)
 
-# =====================
-# ROUTES
-# =====================
+# ================= ROUTES =================
 @app.route("/")
 def home():
     return render_template("index.html")
@@ -147,26 +129,25 @@ def status():
     dt = now()
     return jsonify({
         "now_str": dt.strftime("%d/%m/%Y %H:%M:%S"),
-        "simulation": simulation_enabled,
-        "timers": [
-            seconds_to_hms(effective_seconds(timers[i], dt))
-            for i in range(TIMER_COUNT)
-        ]
+        "simulation": sim_enabled,
+        "timers": [seconds_to_hms(effective_seconds(timers[i], dt)) for i in range(TIMER_COUNT)]
     })
 
 @app.route("/api/timer/<int:i>/start", methods=["POST"])
 def start_timer(i):
+    dt = now()
     t = timers[i-1]
     if not t["running"]:
         t["running"] = True
-        t["start"] = now()
+        t["start"] = dt
     return jsonify(ok=True)
 
 @app.route("/api/timer/<int:i>/stop", methods=["POST"])
 def stop_timer(i):
+    dt = now()
     t = timers[i-1]
     if t["running"]:
-        t["accum"] += int((now() - t["start"]).total_seconds())
+        t["accum"] += int((dt - t["start"]).total_seconds())
         t["running"] = False
         t["start"] = None
     return jsonify(ok=True)
@@ -176,27 +157,30 @@ def reset_timer(i):
     timers[i-1] = {"running": False, "start": None, "accum": 0}
     return jsonify(ok=True)
 
-# ===== SIMULATION =====
+@app.route("/api/log-now", methods=["POST"])
+def log_now():
+    dt = now()
+    if not (FIRST_HOUR <= dt.hour <= LAST_HOUR):
+        return jsonify(ok=False, error="מחוץ לשעות הרישום"), 400
+    write_hour(dt.hour, dt)
+    return jsonify(ok=True)
+
 @app.route("/api/sim/start", methods=["POST"])
 def sim_start():
-    global simulation_enabled, simulated_now
-    data = request.json
-    simulated_now = TZ.localize(
-        datetime.strptime(data["datetime"], "%Y-%m-%d %H:%M")
-    )
-    simulation_enabled = True
-    return jsonify(simulation=True)
+    global sim_enabled, sim_datetime
+    d = request.json["datetime"]
+    sim_datetime = TZ.localize(datetime.strptime(d, "%Y-%m-%d %H:%M"))
+    sim_enabled = True
+    return jsonify(ok=True)
 
 @app.route("/api/sim/stop", methods=["POST"])
 def sim_stop():
-    global simulation_enabled, simulated_now
-    simulation_enabled = False
-    simulated_now = None
-    return jsonify(simulation=False)
+    global sim_enabled
+    sim_enabled = False
+    return jsonify(ok=True)
 
-# =====================
-# MAIN
-# =====================
+# ================= MAIN =================
 if __name__ == "__main__":
-    threading.Thread(target=worker, daemon=True).start()
+    current_workday = workday_key(now())
+    threading.Thread(target=background_worker, daemon=True).start()
     app.run(host="0.0.0.0", port=5000)
