@@ -4,6 +4,7 @@ import pytz
 from flask import Flask, jsonify, request, render_template
 
 TZ = pytz.timezone("Asia/Jerusalem")
+
 RESET_HOUR = 5
 FIRST_HOUR = 8
 LAST_HOUR = 23
@@ -31,16 +32,16 @@ def gs_connect():
 WS = gs_connect()
 
 # =====================
-# STATE
+# TIMERS
 # =====================
 def new_timers():
     return [{"running": False, "start": None, "accum": 0} for _ in range(2)]
 
 REAL_TIMERS = new_timers()
-SIM_TIMERS = new_timers()
+SIM_TIMERS  = new_timers()
 
 REAL_WORKDAY = None
-SIM_WORKDAY = None
+SIM_WORKDAY  = None
 
 REAL_START_RECORDED = False
 
@@ -50,7 +51,7 @@ SIMULATION = {
 }
 
 # =====================
-# TIME HELPERS
+# TIME
 # =====================
 def real_now():
     return datetime.now(TZ)
@@ -64,7 +65,13 @@ def now():
 def active_timers():
     return SIM_TIMERS if SIMULATION["enabled"] else REAL_TIMERS
 
-def seconds_to_hms(sec):
+def workday_key(dt):
+    cutoff = dt.replace(hour=RESET_HOUR, minute=0, second=0, microsecond=0)
+    if dt < cutoff:
+        dt -= timedelta(days=1)
+    return dt.strftime("%d/%m/%Y")
+
+def hms(sec):
     h = sec // 3600
     m = (sec % 3600) // 60
     s = sec % 60
@@ -76,14 +83,8 @@ def effective_seconds(t):
         sec += int((now() - t["start"]).total_seconds())
     return max(0, sec)
 
-def workday_key(dt):
-    cutoff = dt.replace(hour=RESET_HOUR, minute=0, second=0, microsecond=0)
-    if dt < cutoff:
-        dt -= timedelta(days=1)
-    return dt.strftime("%d/%m/%Y")
-
 # =====================
-# GOOGLE WRITE (REAL ONLY)
+# GOOGLE SHEET
 # =====================
 def log_start_time(dt):
     WS.update_cell(4, 2, dt.strftime("%H:%M"))
@@ -91,8 +92,8 @@ def log_start_time(dt):
 def log_hour(hour):
     row = 7 + (hour - FIRST_HOUR)
     WS.update_cell(3, 2, REAL_WORKDAY)
-    WS.update_cell(row, 2, seconds_to_hms(effective_seconds(REAL_TIMERS[0])))
-    WS.update_cell(row, 3, seconds_to_hms(effective_seconds(REAL_TIMERS[1])))
+    WS.update_cell(row, 2, hms(effective_seconds(REAL_TIMERS[0])))
+    WS.update_cell(row, 3, hms(effective_seconds(REAL_TIMERS[1])))
 
 # =====================
 # BACKGROUND RESET
@@ -101,10 +102,10 @@ def worker():
     global REAL_WORKDAY, SIM_WORKDAY, REAL_START_RECORDED
 
     while True:
-        r_now = real_now()
-        s_now = sim_now() if SIMULATION["enabled"] else None
+        rn = real_now()
+        sn = sim_now() if SIMULATION["enabled"] else None
 
-        rk = workday_key(r_now)
+        rk = workday_key(rn)
         if REAL_WORKDAY != rk:
             REAL_WORKDAY = rk
             REAL_START_RECORDED = False
@@ -112,8 +113,7 @@ def worker():
                 t.update({"running": False, "start": None, "accum": 0})
 
         if SIMULATION["enabled"]:
-            sk = workday_key(s_now)
-            global SIM_WORKDAY
+            sk = workday_key(sn)
             if SIM_WORKDAY != sk:
                 SIM_WORKDAY = sk
                 for t in SIM_TIMERS:
@@ -135,16 +135,14 @@ def status():
     return jsonify({
         "now_str": now().strftime("%d/%m/%Y %H:%M:%S"),
         "simulation": SIMULATION["enabled"],
-        "timers": [seconds_to_hms(effective_seconds(t)) for t in active_timers()]
+        "timers": [hms(effective_seconds(t)) for t in active_timers()]
     })
 
 @app.route("/api/timer/<int:i>/start", methods=["POST"])
 def start_timer(i):
     global REAL_START_RECORDED
 
-    timers = active_timers()
-    t = timers[i-1]
-
+    t = active_timers()[i-1]
     if not t["running"]:
         t["running"] = True
         t["start"] = now()
@@ -173,10 +171,12 @@ def reset_timer(i):
 def log_manual():
     if SIMULATION["enabled"]:
         return jsonify(error="simulation"), 400
+
     h = real_now().hour
     if FIRST_HOUR <= h <= LAST_HOUR:
         log_hour(h)
         return jsonify(logged=True)
+
     return jsonify(error="outside hours"), 400
 
 @app.route("/api/sim/start", methods=["POST"])
@@ -193,7 +193,7 @@ def sim_stop():
     return jsonify(simulation=False)
 
 # =====================
-# RUN
+# INIT
 # =====================
 if __name__ == "__main__":
     REAL_WORKDAY = workday_key(real_now())
