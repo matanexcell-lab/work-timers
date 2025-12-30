@@ -4,72 +4,83 @@
 <meta charset="UTF-8">
 <title>Work Timers</title>
 <style>
-body { font-family: Arial; text-align:center; background:#f2f2f2; padding:20px }
+body { font-family: Arial; background:#f2f2f2; text-align:center; padding:20px }
 .card { background:white; padding:20px; margin:15px auto; max-width:360px; border-radius:12px }
 .timer { font-size:36px; margin:10px }
-button { font-size:16px; margin:4px; padding:10px 18px }
+button { font-size:16px; padding:8px 16px; margin:4px }
+input { width:60px }
 .sim { color:red }
 </style>
 </head>
 <body>
 
 <h1>⏱ Work Timers</h1>
-<div id="now"></div>
+<div id="now" class="">טוען...</div>
 
 <div class="card">
-  <h3>טיימר 1</h3>
-  <div class="timer" id="t1">00:00:00</div>
-  <button onclick="start(1)">Start</button>
-  <button onclick="stop(1)">Stop</button>
-  <button onclick="resetT(1)">Reset</button><br>
-  <button onclick="adj(1,300)">+5 דק'</button>
-  <button onclick="adj(1,-600)">-10 דק'</button>
+<h2>טיימר 1</h2>
+<div class="timer" id="t1">00:00:00</div>
+<button onclick="start(1)">Start</button>
+<button onclick="stop(1)">Stop</button>
+<button onclick="resetT(1)">Reset</button><br>
+<input id="h1">:<input id="m1">:<input id="s1">
+<button onclick="setT(1)">✏️ קבע זמן</button>
 </div>
 
 <div class="card">
-  <h3>טיימר 2</h3>
-  <div class="timer" id="t2">00:00:00</div>
-  <button onclick="start(2)">Start</button>
-  <button onclick="stop(2)">Stop</button>
-  <button onclick="resetT(2)">Reset</button><br>
-  <button onclick="adj(2,300)">+5 דק'</button>
-  <button onclick="adj(2,-600)">-10 דק'</button>
+<h2>טיימר 2</h2>
+<div class="timer" id="t2">00:00:00</div>
+<button onclick="start(2)">Start</button>
+<button onclick="stop(2)">Stop</button>
+<button onclick="resetT(2)">Reset</button><br>
+<input id="h2">:<input id="m2">:<input id="s2">
+<button onclick="setT(2)">✏️ קבע זמן</button>
 </div>
 
 <div class="card">
-  <button onclick="logNow()">עדכון ידני ל-Google Sheet</button>
-</div>
-
-<div class="card">
-  <h3>סימולציה</h3>
-  <input type="date" id="d"><br>
-  <input type="time" id="t"><br>
-  <button onclick="simStart()">הפעל</button>
-  <button onclick="simStop()">כבה</button>
+<h3>🧪 סימולציה</h3>
+<input type="date" id="sd">
+<input type="time" id="st"><br><br>
+<button onclick="simStart()">הפעל</button>
+<button onclick="simStop()">כבה</button>
 </div>
 
 <script>
 async function refresh(){
   const r = await fetch("/api/status");
   const d = await r.json();
-  document.getElementById("now").innerHTML =
-    d.now_str + (d.simulation ? " <span class='sim'>(סימולציה)</span>" : "");
+  document.getElementById("now").innerText =
+    d.now_str + (d.simulation ? " (סימולציה)" : "");
+  document.getElementById("now").className = d.simulation ? "sim" : "";
   document.getElementById("t1").innerText = d.timers[0];
   document.getElementById("t2").innerText = d.timers[1];
 }
 setInterval(refresh,1000); refresh();
 
-const p=(u,o={})=>fetch(u,{method:"POST",headers:{'Content-Type':'application/json'},...o});
+function start(i){ fetch(`/api/timer/${i}/start`,{method:"POST"}) }
+function stop(i){ fetch(`/api/timer/${i}/stop`,{method:"POST"}) }
+function resetT(i){ fetch(`/api/timer/${i}/reset`,{method:"POST"}) }
 
-function start(i){p(`/api/timer/${i}/start`)}
-function stop(i){p(`/api/timer/${i}/stop`)}
-function resetT(i){p(`/api/timer/${i}/reset`)}
-function adj(i,s){p(`/api/timer/${i}/adjust`,{body:JSON.stringify({delta:s})})}
-function logNow(){p(`/api/log-now`).then(()=>alert("עודכן"))}
-function simStart(){
-  p(`/api/sim/start`,{body:JSON.stringify({datetime:`${d.value} ${t.value}`})})
+function setT(i){
+  const h = +document.getElementById(`h${i}`).value||0;
+  const m = +document.getElementById(`m${i}`).value||0;
+  const s = +document.getElementById(`s${i}`).value||0;
+  fetch(`/api/timer/${i}/set`,{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({seconds:h*3600+m*60+s})
+  });
 }
-function simStop(){p(`/api/sim/stop`)}
+
+function simStart(){
+  fetch("/api/sim/start",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({datetime:sd.value+" "+st.value})
+  });
+}
+function simStop(){ fetch("/api/sim/stop",{method:"POST"}) }
 </script>
+
 </body>
 </html>
