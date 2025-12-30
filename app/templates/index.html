@@ -3,86 +3,187 @@
 <head>
 <meta charset="UTF-8">
 <title>Work Timers</title>
+
 <style>
-body{font-family:Arial;background:#f2f2f2;text-align:center;padding:20px}
-.card{background:#fff;padding:20px;border-radius:12px;margin:15px auto;max-width:360px}
-.timer{font-size:38px;margin:10px}
-button,input{font-size:18px;padding:10px;margin:5px}
-.sim{color:red}
+body {
+  font-family: Arial, sans-serif;
+  background: #f2f2f2;
+  padding: 20px;
+  text-align: center;
+}
+
+h1 {
+  margin-bottom: 5px;
+}
+
+#nowTitle {
+  font-size: 22px;
+  font-weight: bold;
+  margin-bottom: 20px;
+}
+
+.sim {
+  color: red;
+}
+
+.card {
+  background: white;
+  border-radius: 12px;
+  padding: 22px;
+  margin: 18px auto;
+  max-width: 360px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+.timer {
+  font-size: 38px;
+  margin: 12px 0;
+}
+
+button {
+  font-size: 18px;
+  padding: 12px 22px;
+  margin: 6px;
+  cursor: pointer;
+}
+
+.sim-box {
+  background: #fff;
+  padding: 18px;
+  border-radius: 12px;
+  max-width: 360px;
+  margin: 20px auto;
+}
 </style>
 </head>
 
 <body>
 
 <h1>⏱ Work Timers</h1>
-<div id="now"></div>
+<div id="nowTitle">טוען...</div>
 
+<!-- TIMER 1 -->
 <div class="card">
-<h2>טיימר 1</h2>
-<div class="timer" id="t1">00:00:00</div>
-<input type="time" step="1" id="e1">
-<br>
-<button onclick="start(1)">Start</button>
-<button onclick="stop(1)">Stop</button>
-<button onclick="reset(1)">Reset</button>
-<button onclick="setTime(1)">קבע זמן</button>
+  <h2>טיימר 1</h2>
+  <div class="timer" id="timer-1">00:00:00</div>
+  <button onclick="startTimer(1)">▶ Start</button>
+  <button onclick="stopTimer(1)">⏸ Stop</button>
+  <button onclick="resetTimer(1)">🔄 Reset</button>
+  <br>
+  <button onclick="adjustTimer(1, 300)">➕ 5 דקות</button>
+  <button onclick="adjustTimer(1, -600)">➖ 10 דקות</button>
 </div>
 
+<!-- TIMER 2 -->
 <div class="card">
-<h2>טיימר 2</h2>
-<div class="timer" id="t2">00:00:00</div>
-<input type="time" step="1" id="e2">
-<br>
-<button onclick="start(2)">Start</button>
-<button onclick="stop(2)">Stop</button>
-<button onclick="reset(2)">Reset</button>
-<button onclick="setTime(2)">קבע זמן</button>
+  <h2>טיימר 2</h2>
+  <div class="timer" id="timer-2">00:00:00</div>
+  <button onclick="startTimer(2)">▶ Start</button>
+  <button onclick="stopTimer(2)">⏸ Stop</button>
+  <button onclick="resetTimer(2)">🔄 Reset</button>
+  <br>
+  <button onclick="adjustTimer(2, 300)">➕ 5 דקות</button>
+  <button onclick="adjustTimer(2, -600)">➖ 10 דקות</button>
 </div>
 
+<!-- GOOGLE SHEET -->
 <div class="card">
-<button onclick="logNow()">✏️ עדכון ידני ל-Google Sheet</button>
+  <button onclick="logNow()">✏️ עדכון ידני ל-Google Sheet</button>
 </div>
 
-<div class="card">
-<h3>🧪 סימולציה</h3>
-<input type="date" id="sd">
-<input type="time" id="st">
-<br>
-<button onclick="simStart()">הפעל</button>
-<button onclick="simStop()">כבה</button>
+<!-- SIMULATION -->
+<div class="sim-box">
+  <h3>🧪 סימולציה</h3>
+  <input type="date" id="simDate"><br><br>
+  <input type="time" id="simTime"><br><br>
+  <button onclick="startSim()">הפעל סימולציה</button>
+  <button onclick="stopSim()">כבה סימולציה</button>
 </div>
 
 <script>
-async function refresh(){
-  const r = await fetch("/api/status");
-  const d = await r.json();
-  document.getElementById("now").innerText = d.now_str + (d.simulation?" (סימולציה)":"");
-  document.getElementById("now").className = d.simulation?"sim":"";
-  document.getElementById("t1").innerText = d.timers[0];
-  document.getElementById("t2").innerText = d.timers[1];
+const BASE = window.location.origin;
+
+// ================= STATUS =================
+async function refreshStatus(){
+  try {
+    const r = await fetch(`${BASE}/api/status`);
+    const d = await r.json();
+
+    const title = document.getElementById("nowTitle");
+    title.innerText = d.now_str + (d.simulation ? " (סימולציה)" : "");
+    title.className = d.simulation ? "sim" : "";
+
+    d.timers.forEach((t, i) => {
+      document.getElementById(`timer-${i+1}`).innerText = t;
+    });
+  } catch(e){
+    console.error("Status error:", e);
+  }
 }
-setInterval(refresh,1000); refresh();
 
-function start(i){fetch(`/api/timer/${i}/start`,{method:"POST"})}
-function stop(i){fetch(`/api/timer/${i}/stop`,{method:"POST"})}
-function reset(i){fetch(`/api/timer/${i}/reset`,{method:"POST"})}
+setInterval(refreshStatus, 1000);
+refreshStatus();
 
-function setTime(i){
-  const v=document.getElementById("e"+i).value;
-  if(!v)return;
-  fetch(`/api/timer/${i}/set-time`,{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({time:v.length==5?v+":00":v})
+// ================= TIMER ACTIONS =================
+function startTimer(i){
+  fetch(`${BASE}/api/timer/${i}/start`, { method: "POST" });
+}
+
+function stopTimer(i){
+  fetch(`${BASE}/api/timer/${i}/stop`, { method: "POST" });
+}
+
+function resetTimer(i){
+  fetch(`${BASE}/api/timer/${i}/reset`, { method: "POST" });
+}
+
+// ================= ADJUST TIME =================
+function adjustTimer(i, delta){
+  fetch(`${BASE}/api/timer/${i}/adjust`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ delta: delta })
   })
+  .then(r => r.json())
+  .then(d => {
+    if(d.error){
+      alert("❌ " + d.error);
+    }
+  });
 }
 
-function logNow(){fetch("/api/log-now",{method:"POST"})}
-function simStart(){
-  fetch("/api/sim/start",{method:"POST",headers:{"Content-Type":"application/json"},
-  body:JSON.stringify({datetime:sd.value+" "+st.value})})
+// ================= GOOGLE SHEET =================
+function logNow(){
+  fetch(`${BASE}/api/log-now`, { method: "POST" })
+    .then(r => r.json())
+    .then(d => {
+      if(d.ok){
+        alert("✅ עודכן ב-Google Sheet");
+      } else {
+        alert("❌ " + d.message);
+      }
+    });
 }
-function simStop(){fetch("/api/sim/stop",{method:"POST"})}
+
+// ================= SIMULATION =================
+function startSim(){
+  const d = simDate.value;
+  const t = simTime.value;
+  if(!d || !t){
+    alert("בחר תאריך ושעה");
+    return;
+  }
+
+  fetch(`${BASE}/api/sim/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ datetime: `${d} ${t}` })
+  });
+}
+
+function stopSim(){
+  fetch(`${BASE}/api/sim/stop`, { method: "POST" });
+}
 </script>
 
 </body>
