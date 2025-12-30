@@ -3,83 +3,264 @@
 <head>
 <meta charset="UTF-8">
 <title>Work Timers</title>
+
 <style>
-body { font-family: Arial; background:#f2f2f2; text-align:center; padding:20px }
-.card { background:white; padding:20px; margin:15px auto; max-width:360px; border-radius:12px }
-.timer { font-size:36px; margin:10px }
-button { font-size:16px; padding:8px 16px; margin:4px }
-input { width:60px }
-.sim { color:red }
+  body {
+    font-family: Arial, sans-serif;
+    background: #f2f2f2;
+    padding: 20px;
+    text-align: center;
+  }
+  h1 { margin-bottom: 5px; }
+  #nowTitle {
+    font-size: 24px;
+    font-weight: bold;
+    margin-bottom: 18px;
+  }
+  .sim { color: #c62828; }
+  .card {
+    background: white;
+    border-radius: 14px;
+    padding: 22px;
+    margin: 18px auto;
+    max-width: 420px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+  }
+  .timer {
+    font-size: 44px;
+    margin: 12px 0;
+    letter-spacing: 1px;
+  }
+  button {
+    font-size: 18px;
+    padding: 12px 18px;
+    margin: 6px;
+    cursor: pointer;
+    border-radius: 10px;
+    border: 0;
+  }
+  .btnStart { background:#2e7d32; color:white; }
+  .btnStop  { background:#1565c0; color:white; }
+  .btnReset { background:#6d4c41; color:white; }
+  .btnAdj   { background:#455a64; color:white; }
+  .btnLog   { background:#6a1b9a; color:white; width: 92%; max-width: 380px; }
+  .row { margin-top: 10px; }
+  input[type="text"], input[type="date"], input[type="time"]{
+    font-size: 18px;
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid #bbb;
+    width: 220px;
+    text-align: center;
+  }
+  .hint {
+    font-size: 14px;
+    color: #555;
+    margin-top: 8px;
+  }
+  #toast {
+    margin: 14px auto 0;
+    max-width: 420px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    display: none;
+    font-size: 16px;
+  }
+  #toast.ok { background:#e8f5e9; color:#1b5e20; border:1px solid #a5d6a7; }
+  #toast.bad { background:#ffebee; color:#b71c1c; border:1px solid #ef9a9a; }
 </style>
 </head>
+
 <body>
-
 <h1>⏱ Work Timers</h1>
-<div id="now" class="">טוען...</div>
+<div id="nowTitle">טוען...</div>
 
+<div id="toast"></div>
+
+<!-- TIMER 1 -->
 <div class="card">
-<h2>טיימר 1</h2>
-<div class="timer" id="t1">00:00:00</div>
-<button onclick="start(1)">Start</button>
-<button onclick="stop(1)">Stop</button>
-<button onclick="resetT(1)">Reset</button><br>
-<input id="h1">:<input id="m1">:<input id="s1">
-<button onclick="setT(1)">✏️ קבע זמן</button>
+  <h2>טיימר 1</h2>
+  <div class="timer" id="timer-1">00:00:00</div>
+
+  <div class="row">
+    <button class="btnStart" onclick="startTimer(1)">▶ Start</button>
+    <button class="btnStop"  onclick="stopTimer(1)">⏸ Stop</button>
+    <button class="btnReset" onclick="resetTimer(1)">🔄 Reset</button>
+  </div>
+
+  <div class="row">
+    <button class="btnAdj" onclick="adjust(1,  300)">+5 דקות</button>
+    <button class="btnAdj" onclick="adjust(1, -600)">-10 דקות</button>
+  </div>
+
+  <div class="row">
+    <input type="text" id="set-1" placeholder="HH:MM:SS או MM:SS">
+    <button class="btnAdj" onclick="setTime(1)">Set</button>
+  </div>
+  <div class="hint">אפשר לערוך גם בזמן ריצה.</div>
 </div>
 
+<!-- TIMER 2 -->
 <div class="card">
-<h2>טיימר 2</h2>
-<div class="timer" id="t2">00:00:00</div>
-<button onclick="start(2)">Start</button>
-<button onclick="stop(2)">Stop</button>
-<button onclick="resetT(2)">Reset</button><br>
-<input id="h2">:<input id="m2">:<input id="s2">
-<button onclick="setT(2)">✏️ קבע זמן</button>
+  <h2>טיימר 2</h2>
+  <div class="timer" id="timer-2">00:00:00</div>
+
+  <div class="row">
+    <button class="btnStart" onclick="startTimer(2)">▶ Start</button>
+    <button class="btnStop"  onclick="stopTimer(2)">⏸ Stop</button>
+    <button class="btnReset" onclick="resetTimer(2)">🔄 Reset</button>
+  </div>
+
+  <div class="row">
+    <button class="btnAdj" onclick="adjust(2,  300)">+5 דקות</button>
+    <button class="btnAdj" onclick="adjust(2, -600)">-10 דקות</button>
+  </div>
+
+  <div class="row">
+    <input type="text" id="set-2" placeholder="HH:MM:SS או MM:SS">
+    <button class="btnAdj" onclick="setTime(2)">Set</button>
+  </div>
+  <div class="hint">אפשר לערוך גם בזמן ריצה.</div>
 </div>
 
+<!-- GOOGLE SHEET -->
 <div class="card">
-<h3>🧪 סימולציה</h3>
-<input type="date" id="sd">
-<input type="time" id="st"><br><br>
-<button onclick="simStart()">הפעל</button>
-<button onclick="simStop()">כבה</button>
+  <button class="btnLog" onclick="logNow()">✏️ עדכון ידני ל-Google Sheet</button>
+  <div class="hint">העדכון הידני כותב לפי מצב נוכחי (אמיתי/סימולציה).</div>
+</div>
+
+<!-- SIMULATION -->
+<div class="card">
+  <h3>🧪 סימולציה</h3>
+  <div class="row">
+    <input type="date" id="simDate">
+  </div>
+  <div class="row">
+    <input type="time" id="simTime">
+  </div>
+  <div class="row">
+    <button class="btnAdj" onclick="startSim()">הפעל סימולציה</button>
+    <button class="btnAdj" onclick="stopSim()">כבה סימולציה</button>
+  </div>
+  <div class="hint">הסימולציה מופרדת לגמרי מהטיימרים האמיתיים.</div>
 </div>
 
 <script>
-async function refresh(){
-  const r = await fetch("/api/status");
-  const d = await r.json();
-  document.getElementById("now").innerText =
-    d.now_str + (d.simulation ? " (סימולציה)" : "");
-  document.getElementById("now").className = d.simulation ? "sim" : "";
-  document.getElementById("t1").innerText = d.timers[0];
-  document.getElementById("t2").innerText = d.timers[1];
+const BASE = window.location.origin;
+
+function toastOk(msg){
+  const t = document.getElementById("toast");
+  t.className = "ok";
+  t.innerText = msg;
+  t.style.display = "block";
+  setTimeout(()=> t.style.display="none", 2600);
 }
-setInterval(refresh,1000); refresh();
+function toastBad(msg){
+  const t = document.getElementById("toast");
+  t.className = "bad";
+  t.innerText = msg;
+  t.style.display = "block";
+  setTimeout(()=> t.style.display="none", 4200);
+}
 
-function start(i){ fetch(`/api/timer/${i}/start`,{method:"POST"}) }
-function stop(i){ fetch(`/api/timer/${i}/stop`,{method:"POST"}) }
-function resetT(i){ fetch(`/api/timer/${i}/reset`,{method:"POST"}) }
+async function refreshStatus(){
+  try{
+    const r = await fetch(`${BASE}/api/status`);
+    const d = await r.json();
 
-function setT(i){
-  const h = +document.getElementById(`h${i}`).value||0;
-  const m = +document.getElementById(`m${i}`).value||0;
-  const s = +document.getElementById(`s${i}`).value||0;
-  fetch(`/api/timer/${i}/set`,{
+    const title = document.getElementById("nowTitle");
+    title.innerText = d.now_str + (d.simulation ? " (סימולציה)" : "");
+    title.className = d.simulation ? "sim" : "";
+
+    d.timers.forEach((t, i) => {
+      document.getElementById(`timer-${i+1}`).innerText = t;
+    });
+  }catch(e){
+    console.error(e);
+  }
+}
+
+setInterval(refreshStatus, 1000);
+refreshStatus();
+
+async function startTimer(i){
+  const r = await fetch(`${BASE}/api/timer/${i}/start`, {method:"POST"});
+  const d = await r.json().catch(()=> ({}));
+  if(!r.ok) toastBad(d.error || "שגיאה ב-Start");
+  refreshStatus();
+}
+async function stopTimer(i){
+  const r = await fetch(`${BASE}/api/timer/${i}/stop`, {method:"POST"});
+  const d = await r.json().catch(()=> ({}));
+  if(!r.ok) toastBad(d.error || "שגיאה ב-Stop");
+  refreshStatus();
+}
+async function resetTimer(i){
+  const r = await fetch(`${BASE}/api/timer/${i}/reset`, {method:"POST"});
+  const d = await r.json().catch(()=> ({}));
+  if(!r.ok) toastBad(d.error || "שגיאה ב-Reset");
+  refreshStatus();
+}
+
+async function adjust(i, deltaSec){
+  const r = await fetch(`${BASE}/api/timer/${i}/adjust`, {
     method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({seconds:h*3600+m*60+s})
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({delta: deltaSec})
   });
+  const d = await r.json().catch(()=> ({}));
+  if(!r.ok) toastBad(d.error || "שגיאה בעדכון זמן");
+  else toastOk(`עודכן: ${d.new_time}`);
+  refreshStatus();
 }
 
-function simStart(){
-  fetch("/api/sim/start",{
+async function setTime(i){
+  const val = document.getElementById(`set-${i}`).value.trim();
+  if(!val){ toastBad("הכנס זמן"); return; }
+
+  const r = await fetch(`${BASE}/api/timer/${i}/set`, {
     method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({datetime:sd.value+" "+st.value})
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({value: val})
   });
+  const d = await r.json().catch(()=> ({}));
+  if(!r.ok) toastBad(d.error || "פורמט לא תקין");
+  else toastOk(`נקבע: ${d.new_time}`);
+  refreshStatus();
 }
-function simStop(){ fetch("/api/sim/stop",{method:"POST"}) }
+
+async function logNow(){
+  try{
+    const r = await fetch(`${BASE}/api/log-now`, {method:"POST"});
+    const d = await r.json();
+    if(r.ok && d.ok) toastOk("✅ נשלח עדכון ל-Google Sheet");
+    else toastBad("❌ " + (d.message || "שגיאה בעדכון"));
+  }catch(e){
+    toastBad("❌ שגיאה בעדכון");
+  }
+}
+
+async function startSim(){
+  const d = document.getElementById("simDate").value;
+  const t = document.getElementById("simTime").value;
+  if(!d || !t){ toastBad("בחר תאריך ושעה"); return; }
+
+  const r = await fetch(`${BASE}/api/sim/start`, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({datetime: `${d} ${t}`})
+  });
+  if(!r.ok) toastBad("שגיאה בהפעלת סימולציה");
+  else toastOk("סימולציה הופעלה");
+  refreshStatus();
+}
+
+async function stopSim(){
+  const r = await fetch(`${BASE}/api/sim/stop`, {method:"POST"});
+  if(!r.ok) toastBad("שגיאה בכיבוי סימולציה");
+  else toastOk("סימולציה כובתה");
+  refreshStatus();
+}
 </script>
 
 </body>
