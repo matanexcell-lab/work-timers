@@ -24,7 +24,7 @@ SPREADSHEET_NAME = os.getenv("SPREADSHEET_NAME", "Time Tracking")
 WORKSHEET_NAME = os.getenv("WORKSHEET_NAME", "Log")
 
 # Timer edit policy
-ALLOW_EDIT_WHILE_RUNNING = True  # אתה רוצה "חופשי" => True
+ALLOW_EDIT_WHILE_RUNNING = True  # "עריכה חופשית" => True
 
 # =========================
 # SQLITE (Shared across workers)
@@ -132,7 +132,6 @@ def get_sim_now():
 
 def set_sim_now(dt: datetime):
     dt = dt.astimezone(TZ)
-    # store without tzinfo as "wall clock"
     set_meta("sim_now_iso", dt.replace(tzinfo=None).isoformat(timespec="seconds"))
 
 def now():
@@ -153,12 +152,6 @@ def fmt(sec: int) -> str:
     return f"{h:02}:{m:02}:{s:02}"
 
 def hms_to_seconds(hms: str) -> int:
-    """
-    Accepts:
-      HH:MM:SS
-      H:MM:SS
-      MM:SS  (treated as 00:MM:SS)
-    """
     parts = (hms or "").strip().split(":")
     if len(parts) == 2:
         h = 0
@@ -176,12 +169,8 @@ def hms_to_seconds(hms: str) -> int:
 # RESET LOGIC (05:00) - per mode clock
 # =========================
 def ensure_daily_reset_for_mode(mode: str, clock_dt: datetime):
-    """
-    Reset that mode's timers at/after 05:00 once per day (by that mode clock).
-    """
     if clock_dt is None:
         return
-
     if clock_dt.hour < RESET_HOUR:
         return
 
@@ -202,7 +191,6 @@ def ensure_daily_reset_for_mode(mode: str, clock_dt: datetime):
     conn.close()
 
     set_meta(key, today)
-    # allow start time logging again for that mode/day
     set_meta(f"first_start_logged_day_{mode}", "")
 
 # =========================
@@ -232,7 +220,6 @@ def timer_total_seconds(mode: str, timer_id: int, clock_dt: datetime) -> int:
         now_epoch = tz_now_real().timestamp()
         return elapsed + int(max(0, now_epoch - float(t["start_epoch"])))
 
-    # sim mode
     if t["start_sim_iso"] is None or clock_dt is None:
         return elapsed
     start_dt = datetime.fromisoformat(t["start_sim_iso"])
@@ -242,10 +229,6 @@ def timer_total_seconds(mode: str, timer_id: int, clock_dt: datetime) -> int:
     return elapsed + diff
 
 def set_timer_total(mode: str, timer_id: int, new_total_sec: int, keep_running: bool, clock_dt: datetime):
-    """
-    Sets timer total to new_total_sec.
-    If keep_running is True and timer was running, it remains running from "now".
-    """
     new_total_sec = max(0, int(new_total_sec))
 
     t = timer_row(mode, timer_id)
@@ -275,7 +258,6 @@ def set_timer_total(mode: str, timer_id: int, new_total_sec: int, keep_running: 
         if clock_dt is None:
             clock_dt = get_sim_now()
         if clock_dt is None:
-            # no sim clock -> just set stopped
             running_after = False
 
         if running_after:
@@ -323,25 +305,31 @@ def gs_connect():
     return WS
 
 def target_hour_and_date(clock_dt: datetime):
-    """
-    Your rules:
-    - 00:00-07:59 => write to 23 of previous day (row 23-24)
-    - hour >= 24  => clamp to 23 (row 23-24)
-    - else use hour
-    """
+    # 00:00-07:59 => previous day, row 23-24
     if clock_dt.hour < FIRST_LOG_HOUR:
         return 23, (clock_dt.date() - timedelta(days=1))
+    # hour >= 24 => clamp to 23-24 row
     if clock_dt.hour >= 24:
         return 23, clock_dt.date()
     if clock_dt.hour > 23:
         return 23, clock_dt.date()
     return clock_dt.hour, clock_dt.date()
 
+def find_date_block_cols(ws, date_str: str):
+    """
+    Finds the FIRST column in row 3 that equals date_str.
+    Assumes you have two columns for that date: col and col+1 (Timer 1/Timer 2).
+    """
+    headers = ws.row_values(3)
+    for idx, v in enumerate(headers, start=1):
+        if (v or "").strip() == date_str:
+            return idx, idx + 1
+    return None, None
+
 def log_to_sheet(mode: str, clock_dt: datetime, force=False):
     ws = gs_connect()
     if ws is None:
         return False, "Google creds missing"
-
     if clock_dt is None:
         return False, "Clock missing"
 
@@ -355,11 +343,9 @@ def log_to_sheet(mode: str, clock_dt: datetime, force=False):
         return True, "already logged"
 
     date_str = day.strftime("%d/%m/%Y")
-    headers = ws.row_values(3)
-    if date_str not in headers:
-        return False, f"Date {date_str} not found in sheet row 3"
-
-    col = headers.index(date_str) + 1
+    col1, col2 = find_date_block_cols(ws, date_str)
+    if not col1 or not col2:
+        return False, f"Date {date_str} not found (row 3)"
 
     # rows: row 7 = 08:00, row 22 = 23:00
     row = 7 + (hour - 8)
@@ -368,22 +354,19 @@ def log_to_sheet(mode: str, clock_dt: datetime, force=False):
     if row > 22:
         row = 22
 
-    # total = sum timers of THIS mode
-    total = 0
-    for i in range(1, TIMER_COUNT + 1):
-        total += timer_total_seconds(mode, i, clock_dt)
+    # ✅ write BOTH timers (not total)
+    t1 = fmt(timer_total_seconds(mode, 1, clock_dt))
+    t2 = fmt(timer_total_seconds(mode, 2, clock_dt))
 
-    ws.update_cell(row, col, fmt(total))
+    ws.update_cell(row, col1, t1)
+    ws.update_cell(row, col2, t2)
 
     set_meta(f"last_logged_hour_{mode}", str(hour))
     set_meta(f"last_logged_day_{mode}", day_key)
-    return True, "logged"
+
+    return True, f"logged row={row} col1={col1} col2={col2} ({t1}, {t2})"
 
 def maybe_auto_log_for_mode(mode: str, clock_dt: datetime):
-    """
-    Auto log on exact HH:00:00 when hour in 08..24.
-    Note: 24 is mapped to 23 row anyway, per rules.
-    """
     if clock_dt is None:
         return
     if clock_dt.minute == 0 and clock_dt.second == 0:
@@ -394,10 +377,6 @@ def maybe_auto_log_for_mode(mode: str, clock_dt: datetime):
 # START TIME LOG (Row 4) - per mode
 # =========================
 def log_start_time_if_needed(mode: str, clock_dt: datetime):
-    """
-    Writes HH:MM to row 4 for the DATE of clock_dt,
-    first Start after 05:00, per mode.
-    """
     if clock_dt is None:
         return
     if clock_dt.hour < RESET_HOUR:
@@ -407,7 +386,6 @@ def log_start_time_if_needed(mode: str, clock_dt: datetime):
     if ws is None:
         return
 
-    # Align with sheet date rule
     _, day = target_hour_and_date(clock_dt)
     day_key = day.isoformat()
 
@@ -416,12 +394,15 @@ def log_start_time_if_needed(mode: str, clock_dt: datetime):
         return
 
     date_str = day.strftime("%d/%m/%Y")
-    headers = ws.row_values(3)
-    if date_str not in headers:
+    col1, col2 = find_date_block_cols(ws, date_str)
+    if not col1 or not col2:
         return
 
-    col = headers.index(date_str) + 1
-    ws.update_cell(4, col, clock_dt.strftime("%H:%M"))
+    # ✅ write start time to BOTH columns (same time)
+    start_str = clock_dt.strftime("%H:%M")
+    ws.update_cell(4, col1, start_str)
+    ws.update_cell(4, col2, start_str)
+
     set_meta(meta_key, day_key)
 
 # =========================
@@ -440,23 +421,22 @@ def status():
     n = now()
     mode = current_mode()
 
-    # If sim enabled but missing clock -> disable
     if sim_enabled() and n is None:
         set_meta("sim_enabled", "0")
         set_meta("sim_now_iso", "")
         n = tz_now_real()
         mode = "real"
 
-    # Advance sim clock by 1 second per status tick
+    # advance sim clock by 1 sec per status tick
     if sim_enabled():
         set_sim_now(n + timedelta(seconds=1))
         n = get_sim_now()
 
-    # Reset per mode (based on each clock)
+    # reset per mode
     ensure_daily_reset_for_mode("real", tz_now_real())
     ensure_daily_reset_for_mode("sim", get_sim_now() if sim_enabled() else None)
 
-    # Auto log per mode (both)
+    # auto log per mode (both)
     maybe_auto_log_for_mode("real", tz_now_real())
     if sim_enabled():
         maybe_auto_log_for_mode("sim", n)
@@ -486,8 +466,6 @@ def start_timer(i):
         clock_dt = tz_now_real()
 
     ensure_daily_reset_for_mode(mode, clock_dt)
-
-    # write start time (row 4) on first start after 05:00 for this mode
     log_start_time_if_needed(mode, clock_dt)
 
     t = timer_row(mode, i)
@@ -589,11 +567,10 @@ def adjust_timer(i):
     current = timer_total_seconds(mode, i, clock_dt)
     new_val = max(0, current + delta)
 
-    # keep running if it was running (and allowed)
     set_timer_total(mode, i, new_val, keep_running=True, clock_dt=clock_dt)
     return jsonify(ok=True, new_time=fmt(new_val))
 
-# ---------- EDIT: set absolute time (HH:MM:SS) ----------
+# ---------- EDIT: set absolute time (HH:MM:SS or MM:SS) ----------
 @app.route("/api/timer/<int:i>/set", methods=["POST"])
 def set_timer(i):
     if i < 1 or i > TIMER_COUNT:
@@ -642,6 +619,7 @@ def sim_start():
     data = request.get_json(force=True)
     dt = datetime.strptime(data["datetime"], "%Y-%m-%d %H:%M")
     dt = TZ.localize(dt)
+
     set_meta("sim_enabled", "1")
     set_sim_now(dt)
     return jsonify(ok=True)
