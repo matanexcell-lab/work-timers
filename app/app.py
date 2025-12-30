@@ -24,9 +24,10 @@ SPREADSHEET_NAME = "Time Tracking"
 WORKSHEET_NAME = "Log"
 
 # =========================
-# SQLITE
+# SQLITE (works on Windows + Render)
 # =========================
-DB_PATH = os.getenv("DB_PATH", "/tmp/work_timers.db")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.getenv("DB_PATH", os.path.join(BASE_DIR, "work_timers.db"))
 
 def db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -122,13 +123,15 @@ def mode():
     return "sim" if sim_enabled() else "real"
 
 def fmt(sec):
+    if sec < 0:
+        sec = 0
     h = sec // 3600
     m = (sec % 3600) // 60
     s = sec % 60
     return f"{h:02}:{m:02}:{s:02}"
 
 # =========================
-# RESET 05:00
+# RESET 05:00 (REAL only)
 # =========================
 def daily_reset():
     n = real_now()
@@ -154,22 +157,31 @@ def daily_reset():
 # =========================
 # TIMER CORE
 # =========================
-def total_seconds(mode, timer_id, n):
+def total_seconds(m, timer_id, n):
     conn = db()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM timers WHERE mode=? AND timer_id=?", (mode, timer_id))
+    cur.execute("SELECT * FROM timers WHERE mode=? AND timer_id=?", (m, timer_id))
     t = cur.fetchone()
     conn.close()
 
-    sec = t["elapsed"]
-    if not t["running"]:
-        return sec
+    if not t:
+        return 0
 
-    if mode == "real":
-        return sec + int(real_now().timestamp() - t["start_epoch"])
+    elapsed = int(t["elapsed"] or 0)
+    running = int(t["running"] or 0) == 1
+    if not running:
+        return elapsed
 
+    if m == "real":
+        if t["start_epoch"] is None:
+            return elapsed
+        return elapsed + int(real_now().timestamp() - float(t["start_epoch"]))
+
+    # sim
+    if not t["start_sim_iso"]:
+        return elapsed
     start = TZ.localize(datetime.fromisoformat(t["start_sim_iso"]))
-    return sec + int((n - start).total_seconds())
+    return elapsed + int((n - start).total_seconds())
 
 # =========================
 # GOOGLE SHEETS
@@ -180,6 +192,7 @@ def gs():
     global WS
     if WS:
         return WS
+
     raw = os.getenv("GOOGLE_CREDS_JSON")
     if not raw:
         return None
@@ -188,30 +201,39 @@ def gs():
     from google.oauth2.service_account import Credentials
 
     info = json.loads(raw)
-    creds = Credentials.from_service_account_info(info, scopes=[
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ])
+    creds = Credentials.from_service_account_info(
+        info,
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+    )
     WS = gspread.authorize(creds).open(SPREADSHEET_NAME).worksheet(WORKSHEET_NAME)
     return WS
 
 def log_to_sheet(force=False):
     ws = gs()
     if not ws:
-        return False
+        return False, "Missing GOOGLE_CREDS_JSON / Google connect failed"
 
     n = real_now()
-    hour = 23 if n.hour < FIRST_LOG_HOUR else min(n.hour, 23)
-    day = n.date() if n.hour >= FIRST_LOG_HOUR else n.date() - timedelta(days=1)
+
+    # after midnight -> write to 23:00-24:00 (hour=23)
+    if n.hour < FIRST_LOG_HOUR:
+        hour = 23
+        day = n.date() - timedelta(days=1)
+    else:
+        hour = min(n.hour, 23)
+        day = n.date()
 
     if not force:
         if get_meta("last_logged_hour") == str(hour) and get_meta("last_logged_day") == day.isoformat():
-            return True
+            return True, "already logged"
 
     date_str = day.strftime("%d/%m/%Y")
     headers = ws.row_values(3)
     if date_str not in headers:
-        return False
+        return False, f"Date {date_str} not found in row 3"
 
     col = headers.index(date_str) + 1
     row = 7 + (hour - 8)
@@ -222,7 +244,7 @@ def log_to_sheet(force=False):
 
     set_meta("last_logged_hour", str(hour))
     set_meta("last_logged_day", day.isoformat())
-    return True
+    return True, "logged"
 
 # =========================
 # ROUTES
@@ -235,107 +257,144 @@ def ui():
 def status():
     daily_reset()
 
+    n = now()
     if sim_enabled():
-        set_sim_now(now() + timedelta(seconds=1))
+        # advance sim clock by 1s on each status poll
+        set_sim_now(n + timedelta(seconds=1))
+        n = now()
 
-    timers = [fmt(total_seconds(mode(), i, now())) for i in range(1, TIMER_COUNT + 1)]
+    # auto log each full hour (real time)
+    r = real_now()
+    if r.minute == 0 and r.second == 0 and FIRST_LOG_HOUR <= r.hour <= LAST_LOG_HOUR:
+        log_to_sheet(force=False)
 
-    if real_now().minute == 0 and real_now().second == 0:
-        if FIRST_LOG_HOUR <= real_now().hour <= LAST_LOG_HOUR:
-            log_to_sheet()
+    m = mode()
+    timers_out = [fmt(total_seconds(m, i, n)) for i in range(1, TIMER_COUNT + 1)]
 
     return jsonify({
-        "now_str": now().strftime("%d/%m/%Y %H:%M:%S"),
+        "now_str": n.strftime("%d/%m/%Y %H:%M:%S"),
         "simulation": sim_enabled(),
-        "timers": timers
+        "timers": timers_out
     })
 
-@app.route("/api/timer/<int:i>/start", methods=["POST"])
+# ✅ IMPORTANT: allow BOTH POST and GET (so browser URL works too)
+@app.route("/api/timer/<int:i>/start", methods=["POST", "GET"])
 def start(i):
-    n = now()
+    if i < 1 or i > TIMER_COUNT:
+        return jsonify(error="bad timer id"), 400
+
     m = mode()
+    n = now()
 
     conn = db()
     cur = conn.cursor()
+    cur.execute("SELECT running FROM timers WHERE mode=? AND timer_id=?", (m, i))
+    t = cur.fetchone()
+    if not t:
+        conn.close()
+        return jsonify(error="timer missing"), 500
 
-    if m == "real":
-        cur.execute("UPDATE timers SET running=1, start_epoch=? WHERE mode='real' AND timer_id=?",
-                    (real_now().timestamp(), i))
+    if int(t["running"] or 0) == 0:
+        if m == "real":
+            cur.execute(
+                "UPDATE timers SET running=1, start_epoch=? WHERE mode='real' AND timer_id=?",
+                (real_now().timestamp(), i)
+            )
 
-        today = real_now().date().isoformat()
-        if get_meta("first_start_logged_day") != today:
-            ws = gs()
-            if ws:
-                date_str = real_now().strftime("%d/%m/%Y")
-                headers = ws.row_values(3)
-                if date_str in headers:
-                    ws.update_cell(4, headers.index(date_str)+1, real_now().strftime("%H:%M"))
-            set_meta("first_start_logged_day", today)
+            # first start time logging (row 4) once per day (REAL)
+            today = real_now().date().isoformat()
+            if get_meta("first_start_logged_day") != today:
+                ws = gs()
+                if ws:
+                    date_str = real_now().strftime("%d/%m/%Y")
+                    headers = ws.row_values(3)
+                    if date_str in headers:
+                        ws.update_cell(4, headers.index(date_str) + 1, real_now().strftime("%H:%M"))
+                set_meta("first_start_logged_day", today)
 
-    else:
-        cur.execute("UPDATE timers SET running=1, start_sim_iso=? WHERE mode='sim' AND timer_id=?",
-                    (n.replace(tzinfo=None).isoformat(), i))
+        else:
+            cur.execute(
+                "UPDATE timers SET running=1, start_sim_iso=? WHERE mode='sim' AND timer_id=?",
+                (n.replace(tzinfo=None).isoformat(), i)
+            )
 
     conn.commit()
     conn.close()
-    return ("", 204)
+    return jsonify(ok=True)
 
-@app.route("/api/timer/<int:i>/stop", methods=["POST"])
+@app.route("/api/timer/<int:i>/stop", methods=["POST", "GET"])
 def stop(i):
-    n = now()
+    if i < 1 or i > TIMER_COUNT:
+        return jsonify(error="bad timer id"), 400
+
     m = mode()
+    n = now()
     sec = total_seconds(m, i, n)
 
     conn = db()
     cur = conn.cursor()
     cur.execute("""
-    UPDATE timers SET running=0, elapsed=?, start_epoch=NULL, start_sim_iso=NULL
+    UPDATE timers
+    SET running=0, elapsed=?, start_epoch=NULL, start_sim_iso=NULL
     WHERE mode=? AND timer_id=?
     """, (sec, m, i))
     conn.commit()
     conn.close()
-    return ("", 204)
+    return jsonify(ok=True)
 
-@app.route("/api/timer/<int:i>/reset", methods=["POST"])
+@app.route("/api/timer/<int:i>/reset", methods=["POST", "GET"])
 def reset(i):
+    if i < 1 or i > TIMER_COUNT:
+        return jsonify(error="bad timer id"), 400
+
     conn = db()
     cur = conn.cursor()
     cur.execute("""
-    UPDATE timers SET running=0, elapsed=0, start_epoch=NULL, start_sim_iso=NULL
+    UPDATE timers
+    SET running=0, elapsed=0, start_epoch=NULL, start_sim_iso=NULL
     WHERE mode=? AND timer_id=?
     """, (mode(), i))
     conn.commit()
     conn.close()
-    return ("", 204)
+    return jsonify(ok=True)
 
 @app.route("/api/timer/<int:i>/set-time", methods=["POST"])
 def set_time(i):
-    t = request.json.get("time")
-    h, m, s = map(int, t.split(":"))
-    sec = h*3600 + m*60 + s
+    if i < 1 or i > TIMER_COUNT:
+        return jsonify(error="bad timer id"), 400
+
+    t = request.json.get("time", "")
+    try:
+        hh, mm, ss = map(int, t.split(":"))
+        sec = hh * 3600 + mm * 60 + ss
+    except Exception:
+        return jsonify(error="bad time format, expected HH:MM:SS"), 400
 
     conn = db()
     cur = conn.cursor()
     cur.execute("""
-    UPDATE timers SET running=0, elapsed=?, start_epoch=NULL, start_sim_iso=NULL
+    UPDATE timers
+    SET running=0, elapsed=?, start_epoch=NULL, start_sim_iso=NULL
     WHERE mode=? AND timer_id=?
     """, (sec, mode(), i))
     conn.commit()
     conn.close()
     return jsonify(ok=True)
 
-@app.route("/api/log-now", methods=["POST"])
+@app.route("/api/log-now", methods=["POST", "GET"])
 def log_now():
-    return jsonify(ok=log_to_sheet(force=True))
+    ok, msg = log_to_sheet(force=True)
+    return jsonify(ok=ok, message=msg), (200 if ok else 500)
 
 @app.route("/api/sim/start", methods=["POST"])
 def sim_start():
-    dt = TZ.localize(datetime.strptime(request.json["datetime"], "%Y-%m-%d %H:%M"))
+    data = request.get_json(force=True)
+    dt = TZ.localize(datetime.strptime(data["datetime"], "%Y-%m-%d %H:%M"))
     set_meta("sim_enabled", "1")
     set_sim_now(dt)
     return jsonify(ok=True)
 
-@app.route("/api/sim/stop", methods=["POST"])
+@app.route("/api/sim/stop", methods=["POST", "GET"])
 def sim_stop():
     set_meta("sim_enabled", "0")
     set_meta("sim_now_iso", "")
