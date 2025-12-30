@@ -6,9 +6,15 @@ from datetime import datetime, timedelta
 import pytz
 from flask import Flask, jsonify, render_template, request
 
+# =========================
+# APP
+# =========================
 app = Flask(__name__, template_folder="templates")
 TZ = pytz.timezone("Asia/Jerusalem")
 
+# =========================
+# CONFIG
+# =========================
 TIMER_COUNT = 2
 RESET_HOUR = 5
 FIRST_LOG_HOUR = 8
@@ -17,11 +23,13 @@ LAST_LOG_HOUR = 24
 SPREADSHEET_NAME = "Time Tracking"
 WORKSHEET_NAME = "Log"
 
-DB_PATH = os.getenv("DB_PATH", "/tmp/work_timers.db")
+ALLOW_EDIT_WHILE_RUNNING = False
 
 # =========================
-# DB
+# SQLITE
 # =========================
+DB_PATH = os.getenv("DB_PATH", "/tmp/work_timers.db")
+
 def db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -53,7 +61,8 @@ def init_db():
     for mode in ("real", "sim"):
         for i in range(1, TIMER_COUNT + 1):
             cur.execute("""
-            INSERT OR IGNORE INTO timers VALUES (?, ?, 0, 0, NULL, NULL)
+            INSERT OR IGNORE INTO timers
+            VALUES (?, ?, 0, 0, NULL, NULL)
             """, (mode, i))
 
     defaults = {
@@ -62,9 +71,8 @@ def init_db():
         "last_reset_date": "",
         "last_logged_hour": "",
         "last_logged_day": "",
-        "first_start_logged_date": ""
+        "first_start_logged_date": "",
     }
-
     for k, v in defaults.items():
         cur.execute("INSERT OR IGNORE INTO meta VALUES (?, ?)", (k, v))
 
@@ -77,16 +85,19 @@ init_db()
 # META
 # =========================
 def get_meta(k):
-    c = db(); cur = c.cursor()
+    conn = db()
+    cur = conn.cursor()
     cur.execute("SELECT v FROM meta WHERE k=?", (k,))
     r = cur.fetchone()
-    c.close()
+    conn.close()
     return r["v"] if r else ""
 
 def set_meta(k, v):
-    c = db(); cur = c.cursor()
+    conn = db()
+    cur = conn.cursor()
     cur.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (k, v))
-    c.commit(); c.close()
+    conn.commit()
+    conn.close()
 
 # =========================
 # TIME
@@ -97,14 +108,14 @@ def tz_now_real():
 def sim_enabled():
     return get_meta("sim_enabled") == "1"
 
+def set_sim_now(dt):
+    set_meta("sim_now_iso", dt.replace(tzinfo=None).isoformat(timespec="seconds"))
+
 def get_sim_now():
     iso = get_meta("sim_now_iso")
     if not iso:
         return None
     return TZ.localize(datetime.fromisoformat(iso))
-
-def set_sim_now(dt):
-    set_meta("sim_now_iso", dt.replace(tzinfo=None).isoformat(timespec="seconds"))
 
 def now():
     return get_sim_now() if sim_enabled() else tz_now_real()
@@ -115,49 +126,50 @@ def current_mode():
 # =========================
 # RESET 05:00
 # =========================
-def ensure_daily_reset():
-    n = tz_now_real()
+def ensure_daily_reset(n):
     if n.hour < RESET_HOUR:
         return
-
     today = n.date().isoformat()
     if get_meta("last_reset_date") == today:
         return
 
-    c = db(); cur = c.cursor()
+    conn = db()
+    cur = conn.cursor()
     cur.execute("""
     UPDATE timers SET running=0, elapsed=0, start_epoch=NULL, start_sim_iso=NULL
     WHERE mode='real'
     """)
-    c.commit(); c.close()
+    conn.commit()
+    conn.close()
 
     set_meta("last_reset_date", today)
     set_meta("first_start_logged_date", "")
 
 # =========================
-# TIMER LOGIC
+# TIMER
 # =========================
 def timer_total_seconds(mode, i, n):
-    c = db(); cur = c.cursor()
+    conn = db()
+    cur = conn.cursor()
     cur.execute("SELECT * FROM timers WHERE mode=? AND timer_id=?", (mode, i))
     t = cur.fetchone()
-    c.close()
+    conn.close()
 
-    total = int(t["elapsed"])
-    if int(t["running"]) != 1:
-        return total
+    sec = int(t["elapsed"])
+    if not t["running"]:
+        return sec
 
     if mode == "real":
-        return total + int(tz_now_real().timestamp() - float(t["start_epoch"]))
-    else:
-        start = TZ.localize(datetime.fromisoformat(t["start_sim_iso"]))
-        return total + int((n - start).total_seconds())
+        return sec + int(tz_now_real().timestamp() - t["start_epoch"])
+
+    start = TZ.localize(datetime.fromisoformat(t["start_sim_iso"]))
+    return sec + int((n - start).total_seconds())
 
 def fmt(sec):
     return f"{sec//3600:02}:{(sec%3600)//60:02}:{sec%60:02}"
 
 # =========================
-# GOOGLE SHEETS
+# GOOGLE SHEET
 # =========================
 WS = None
 
@@ -165,7 +177,6 @@ def gs():
     global WS
     if WS:
         return WS
-
     raw = os.getenv("GOOGLE_CREDS_JSON")
     if not raw:
         return None
@@ -173,121 +184,117 @@ def gs():
     import gspread
     from google.oauth2.service_account import Credentials
 
-    info = json.loads(raw)
     creds = Credentials.from_service_account_info(
-        info,
+        json.loads(raw),
         scopes=[
             "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ]
+            "https://www.googleapis.com/auth/drive"
+        ],
     )
-    gc = gspread.authorize(creds)
-    WS = gc.open(SPREADSHEET_NAME).worksheet(WORKSHEET_NAME)
+    WS = gspread.authorize(creds).open(SPREADSHEET_NAME).worksheet(WORKSHEET_NAME)
     return WS
 
 def target_hour_and_date(n):
     if n.hour < FIRST_LOG_HOUR:
         return 23, n.date() - timedelta(days=1)
-    return min(n.hour, 23), n.date()
+    if n.hour > 23:
+        return 23, n.date()
+    return n.hour, n.date()
+
+def log_start_time(clock_dt):
+    if clock_dt.hour < RESET_HOUR:
+        return
+
+    ws = gs()
+    if not ws:
+        return
+
+    _, day = target_hour_and_date(clock_dt)
+    if get_meta("first_start_logged_date") == day.isoformat():
+        return
+
+    headers = ws.row_values(3)
+    date_str = day.strftime("%d/%m/%Y")
+    if date_str not in headers:
+        return
+
+    col = headers.index(date_str) + 1
+    ws.update_cell(4, col, clock_dt.strftime("%H:%M"))
+    set_meta("first_start_logged_date", day.isoformat())
 
 def log_to_sheet(force=False):
     ws = gs()
     if not ws:
-        return False, "no creds"
+        return
 
     n = tz_now_real()
-    hour, day = target_hour_and_date(n)
+    h, d = target_hour_and_date(n)
 
     if not force:
-        if get_meta("last_logged_hour") == str(hour) and get_meta("last_logged_day") == day.isoformat():
-            return True, "skip"
+        if get_meta("last_logged_hour") == str(h) and get_meta("last_logged_day") == d.isoformat():
+            return
 
-    date_str = day.strftime("%d/%m/%Y")
     headers = ws.row_values(3)
+    date_str = d.strftime("%d/%m/%Y")
     if date_str not in headers:
-        return False, "date not found"
+        return
 
     col = headers.index(date_str) + 1
-    row = max(7, min(22, 7 + hour - 8))
+    row = min(22, max(7, 7 + (h - 8)))
 
-    total = sum(timer_total_seconds("real", i, tz_now_real()) for i in range(1, TIMER_COUNT + 1))
+    total = sum(timer_total_seconds("real", i, n) for i in range(1, TIMER_COUNT + 1))
     ws.update_cell(row, col, fmt(total))
 
-    set_meta("last_logged_hour", str(hour))
-    set_meta("last_logged_day", day.isoformat())
-    return True, "logged"
+    set_meta("last_logged_hour", str(h))
+    set_meta("last_logged_day", d.isoformat())
 
 def maybe_auto_log():
-    n = tz_now_real()
-    if n.minute == 0 and n.second == 0 and FIRST_LOG_HOUR <= n.hour <= LAST_LOG_HOUR:
-        log_to_sheet(False)
-
-# =========================
-# START TIME (ROW 4)
-# =========================
-def log_start_time_if_needed(n):
-    if n.hour < RESET_HOUR:
-        return
-
-    ws = gs()
-    if not ws:
-        return
-
-    _, day = target_hour_and_date(n)
-    key = day.isoformat()
-    if get_meta("first_start_logged_date") == key:
-        return
-
-    date_str = day.strftime("%d/%m/%Y")
-    headers = ws.row_values(3)
-    if date_str not in headers:
-        return
-
-    col = headers.index(date_str) + 1
-    ws.update_cell(4, col, n.strftime("%H:%M"))
-    set_meta("first_start_logged_date", key)
+    r = tz_now_real()
+    if r.minute == 0 and r.second == 0 and FIRST_LOG_HOUR <= r.hour <= LAST_LOG_HOUR:
+        log_to_sheet()
 
 # =========================
 # ROUTES
 # =========================
 @app.route("/")
+@app.route("/ui")
 def ui():
     return render_template("index.html")
 
 @app.route("/api/status")
 def status():
-    ensure_daily_reset()
+    n = now()
+    ensure_daily_reset(tz_now_real())
     maybe_auto_log()
 
-    n = now()
-    mode = current_mode()
-    timers = [fmt(timer_total_seconds(mode, i, n)) for i in range(1, TIMER_COUNT + 1)]
+    if sim_enabled():
+        set_sim_now(n + timedelta(seconds=1))
 
-    return jsonify(
-        now_str=n.strftime("%d/%m/%Y %H:%M:%S"),
-        simulation=sim_enabled(),
-        timers=timers
-    )
+    return jsonify({
+        "now_str": n.strftime("%d/%m/%Y %H:%M:%S"),
+        "simulation": sim_enabled(),
+        "timers": [fmt(timer_total_seconds(current_mode(), i, n)) for i in range(1, TIMER_COUNT + 1)]
+    })
 
 @app.route("/api/timer/<int:i>/start", methods=["POST"])
 def start_timer(i):
     n = now()
-    log_start_time_if_needed(n)
+    log_start_time(n)
 
-    c = db(); cur = c.cursor()
-    cur.execute("SELECT running FROM timers WHERE mode=? AND timer_id=?", (current_mode(), i))
-    if cur.fetchone()["running"] == 0:
-        if current_mode() == "real":
-            cur.execute("""
-            UPDATE timers SET running=1, start_epoch=?
-            WHERE mode='real' AND timer_id=?
-            """, (tz_now_real().timestamp(), i))
-        else:
-            cur.execute("""
-            UPDATE timers SET running=1, start_sim_iso=?
-            WHERE mode='sim' AND timer_id=?
-            """, (n.replace(tzinfo=None).isoformat(timespec="seconds"), i))
-    c.commit(); c.close()
+    conn = db()
+    cur = conn.cursor()
+    if current_mode() == "real":
+        cur.execute("""
+        UPDATE timers SET running=1, start_epoch=?
+        WHERE mode='real' AND timer_id=?
+        """, (tz_now_real().timestamp(), i))
+    else:
+        cur.execute("""
+        UPDATE timers SET running=1, start_sim_iso=?
+        WHERE mode='sim' AND timer_id=?
+        """, (n.replace(tzinfo=None).isoformat(timespec="seconds"), i))
+    conn.commit()
+    conn.close()
     return ("", 204)
 
 @app.route("/api/timer/<int:i>/stop", methods=["POST"])
@@ -295,48 +302,55 @@ def stop_timer(i):
     n = now()
     total = timer_total_seconds(current_mode(), i, n)
 
-    c = db(); cur = c.cursor()
+    conn = db()
+    cur = conn.cursor()
     cur.execute("""
     UPDATE timers SET running=0, elapsed=?, start_epoch=NULL, start_sim_iso=NULL
     WHERE mode=? AND timer_id=?
     """, (total, current_mode(), i))
-    c.commit(); c.close()
+    conn.commit()
+    conn.close()
     return ("", 204)
 
 @app.route("/api/timer/<int:i>/reset", methods=["POST"])
 def reset_timer(i):
-    c = db(); cur = c.cursor()
+    conn = db()
+    cur = conn.cursor()
     cur.execute("""
     UPDATE timers SET running=0, elapsed=0, start_epoch=NULL, start_sim_iso=NULL
     WHERE mode=? AND timer_id=?
     """, (current_mode(), i))
-    c.commit(); c.close()
+    conn.commit()
+    conn.close()
     return ("", 204)
 
 @app.route("/api/timer/<int:i>/adjust", methods=["POST"])
 def adjust_timer(i):
-    data = request.get_json()
+    data = request.json
     delta = int(data["delta"])
 
-    c = db(); cur = c.cursor()
-    cur.execute("SELECT running, elapsed FROM timers WHERE mode=? AND timer_id=?", (current_mode(), i))
-    t = cur.fetchone()
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("SELECT running FROM timers WHERE mode=? AND timer_id=?", (current_mode(), i))
+    if cur.fetchone()["running"] and not ALLOW_EDIT_WHILE_RUNNING:
+        conn.close()
+        return jsonify(error="running"), 400
 
-    if t["running"] == 1:
-        return jsonify(error="cannot edit while running"), 400
+    n = now()
+    new_val = max(0, timer_total_seconds(current_mode(), i, n) + delta)
 
-    new_val = max(0, int(t["elapsed"]) + delta)
     cur.execute("""
-    UPDATE timers SET elapsed=? WHERE mode=? AND timer_id=?
+    UPDATE timers SET elapsed=?, running=0, start_epoch=NULL, start_sim_iso=NULL
+    WHERE mode=? AND timer_id=?
     """, (new_val, current_mode(), i))
-    c.commit(); c.close()
-
-    return jsonify(ok=True, new_time=fmt(new_val))
+    conn.commit()
+    conn.close()
+    return jsonify(ok=True)
 
 @app.route("/api/log-now", methods=["POST"])
 def manual_log():
-    ok, msg = log_to_sheet(True)
-    return jsonify(ok=ok, message=msg)
+    log_to_sheet(force=True)
+    return jsonify(ok=True)
 
 @app.route("/api/sim/start", methods=["POST"])
 def sim_start():
