@@ -119,9 +119,25 @@ def set_meta(k: str, v: str):
     conn.commit()
     conn.close()
 
+
+
+
 # =========================
 # TIME HELPERS
 # =========================
+should_update_daily_summary(now_dt):
+    """
+    מחזיר True רק פעם אחת ביום – ב־00:30
+    """
+    if now_dt.hour == 0 and now_dt.minute == 30:
+        last = get_meta("daily_calendar_updated_date")  # YYYY-MM-DD
+        today = now_dt.date().isoformat()
+        if last != today:
+            set_meta("daily_calendar_updated_date", today)
+            return True
+    return False
+
+
 def tz_now_real():
     return datetime.now(TZ)
 
