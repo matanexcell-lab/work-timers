@@ -366,6 +366,22 @@ def log_to_sheet(mode: str, clock_dt: datetime, force=False):
     set_meta(key_d, day_str)
     return True, "logged"
 
+def get_activity_time_for_day(ws, day):
+    """
+    מחזיר את זמן הפעילות היומי (שורה 23–24) עבור יום נתון
+    """
+    date_str = day.strftime("%d/%m/%Y")
+    headers = ws.row_values(3)
+
+    if date_str not in headers:
+        return None
+
+    col = headers.index(date_str) + 1
+    row = 22  # שורה 23–24 (08=7 ... 23=22)
+
+    value = ws.cell(row, col).value
+    return value or "00:00:00"
+
 def should_auto_log_for_mode(mode: str, clock_dt: datetime) -> bool:
     """
     ✅ Do not miss even if request arrives at :38
