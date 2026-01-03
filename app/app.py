@@ -262,16 +262,9 @@ def _row_for_hour(hour: int) -> int:
     return row
 
 def log_to_sheet(mode: str, force: bool, clock_dt: datetime):
-    """
-    Writes BOTH timers to the sheet cell:
-    "T1 00:00:10 | T2 00:00:05"
-    """
     ws = gs_connect()
-    if ws is None:
-        return False, "Google creds missing", ""
-
-    if clock_dt is None:
-        return False, "Clock missing", ""
+    if ws is None or clock_dt is None:
+        return False, "Google Sheet לא זמין", ""
 
     hour, day = target_hour_and_date(clock_dt)
 
@@ -279,23 +272,25 @@ def log_to_sheet(mode: str, force: bool, clock_dt: datetime):
     last_d = get_meta(f"last_logged_day_{mode}")
     day_key = day.isoformat()
 
-    # IMPORTANT: prevent duplicates per (mode, hour, day_key)
     if not force and last_h == str(hour) and last_d == day_key:
         return True, "already logged", get_meta(f"last_sheet_update_{mode}")
 
     date_str = day.strftime("%d/%m/%Y")
     headers = ws.row_values(3)
-    if date_str not in headers:
-        return False, f"Date {date_str} not found in sheet row 3", ""
 
-    col = headers.index(date_str) + 1
+    if date_str not in headers:
+        return False, f"תאריך {date_str} לא נמצא", ""
+
+    base_col = headers.index(date_str) + 1
     row = _row_for_hour(hour)
 
+    # ⏱ חישוב זמנים
     t1 = fmt(timer_total_seconds(mode, 1, clock_dt))
     t2 = fmt(timer_total_seconds(mode, 2, clock_dt))
-    val = f"T1 {t1} | T2 {t2}"
 
-    ws.update_cell(row, col, val)
+    # ✅ כתיבה לשתי עמודות נפרדות
+    ws.update_cell(row, base_col, t1)        # Timer 1
+    ws.update_cell(row, base_col + 1, t2)    # Timer 2
 
     set_meta(f"last_logged_hour_{mode}", str(hour))
     set_meta(f"last_logged_day_{mode}", day_key)
