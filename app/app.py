@@ -125,7 +125,7 @@ def set_meta(k: str, v: str):
 # =========================
 # TIME HELPERS
 # =========================
-should_update_daily_summary(now_dt):
+def should_update_daily_summary(now_dt):
     """
     מחזיר True רק פעם אחת ביום – ב־00:30
     """
