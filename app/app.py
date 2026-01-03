@@ -358,7 +358,8 @@ def log_start_time_if_needed(mode: str, clock_dt: datetime):
         return
 
     col = headers.index(date_str) + 1
-    ws.update_cell(4, col, clock_dt.strftime("%H:%M"))
+    ws.update_cell(4, col, clock_dt.strftime("%H:%M"))       # Timer 1
+ws.update_cell(4, col + 1, clock_dt.strftime("%H:%M"))   # Timer 2
     set_meta(meta_key, day_key)
 
 # =========================
