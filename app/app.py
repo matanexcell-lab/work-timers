@@ -510,6 +510,23 @@ def status():
     # which timers to display? current mode
     mode = current_mode()
     clock = now_for_mode(mode)
+# =========================
+    # DAILY CALENDAR SUMMARY (00:30)
+    # =========================
+    now_real = tz_now_real()
+
+    if should_update_daily_summary(now_real):
+        yesterday = now_real.date() - timedelta(days=1)
+
+        ws = gs_connect()
+        if ws:
+            activity = get_activity_time_for_day(ws, yesterday)
+            if activity:
+                update_calendar_daily_summary(
+                    calendar_id="primary",
+                    day=yesterday,
+                    activity_time=activity
+                )
 
     timers = [fmt(timer_total_seconds(mode, i, clock)) for i in range(1, TIMER_COUNT + 1)]
 
