@@ -382,9 +382,10 @@ def log_to_sheet(mode: str, clock_dt: datetime, force=False):
     set_meta(key_d, day_str)
     return True, "logged"
 
+
 def get_activity_time_for_day(ws, day):
     """
-    מחזיר את זמן הפעילות היומי (שורה 23–24) עבור יום נתון
+    מחזיר את זמן הפעילות היומי – הערך המקסימלי בעמודת היום
     """
     date_str = day.strftime("%d/%m/%Y")
     headers = ws.row_values(3)
@@ -393,10 +394,32 @@ def get_activity_time_for_day(ws, day):
         return None
 
     col = headers.index(date_str) + 1
-    row = 22  # שורה 23–24 (08=7 ... 23=22)
 
-    value = ws.cell(row, col).value
-    return value or "00:00:00"
+    max_seconds = 0
+
+    # שורות 7–22 = 08:00–24:00
+    for row in range(7, 23):
+        val = ws.cell(row, col).value
+        if not val:
+            continue
+
+        try:
+            h, m, s = map(int, val.split(":"))
+            total = h * 3600 + m * 60 + s
+            max_seconds = max(max_seconds, total)
+        except Exception:
+            continue
+
+    # חזרה לפורמט HH:MM:SS
+    h = max_seconds // 3600
+    m = (max_seconds % 3600) // 60
+    s = max_seconds % 60
+    return f"{h:02}:{m:02}:{s:02}"
+
+
+
+
+
 
 
 # =========================
