@@ -418,6 +418,50 @@ def get_calendar_service():
     return service
 
 
+def update_calendar_daily_summary(calendar_id: str, day, activity_time: str):
+    """
+    מעדכן את אירוע 'סיכום יום' בתאריך נתון
+    """
+    service = get_calendar_service()
+    if service is None:
+        return False
+
+    start = datetime.combine(day, datetime.min.time()).astimezone(TZ)
+    end = start + timedelta(days=1)
+
+    events = service.events().list(
+        calendarId=calendar_id,
+        timeMin=start.isoformat(),
+        timeMax=end.isoformat(),
+        singleEvents=True
+    ).execute().get("items", [])
+
+    for ev in events:
+        if ev.get("summary") == "סיכום יום":
+            desc = ev.get("description", "")
+
+            lines = desc.splitlines()
+            found = False
+            for i, line in enumerate(lines):
+                if line.startswith("זמן שהיית בפעילות"):
+                    lines[i] = f"זמן שהיית בפעילות- {activity_time}"
+                    found = True
+
+            if not found:
+                lines.append(f"זמן שהיית בפעילות- {activity_time}")
+
+            ev["description"] = "\n".join(lines)
+
+            service.events().update(
+                calendarId=calendar_id,
+                eventId=ev["id"],
+                body=ev
+            ).execute()
+
+            return True
+
+    return False
+
 
 
 def should_auto_log_for_mode(mode: str, clock_dt: datetime) -> bool:
