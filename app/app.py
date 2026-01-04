@@ -398,6 +398,26 @@ def get_activity_time_for_day(ws, day):
     value = ws.cell(row, col).value
     return value or "00:00:00"
 
+
+# =========================
+# GOOGLE CALENDAR
+# =========================
+from googleapiclient.discovery import build
+from google.oauth2.service_account import Credentials
+
+CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar"]
+
+def get_calendar_service():
+    raw = os.getenv("GOOGLE_CREDS_JSON")
+    if not raw:
+        return None
+
+    info = json.loads(raw)
+    creds = Credentials.from_service_account_info(info, scopes=CALENDAR_SCOPES)
+    service = build("calendar", "v3", credentials=creds)
+    return service
+
+
 def should_auto_log_for_mode(mode: str, clock_dt: datetime) -> bool:
     """
     ✅ Do not miss even if request arrives at :38
