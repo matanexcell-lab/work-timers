@@ -703,6 +703,31 @@ def set_timer(i):
 
 # ----- Manual log now (for current mode) -----
 @app.route("/api/log-now", methods=["POST"])
+
+@app.route("/api/debug/daily-summary", methods=["GET"])
+def debug_daily_summary():
+    now_real = tz_now_real()
+    yesterday = now_real.date() - timedelta(days=1)
+
+    print("DEBUG daily summary")
+    print("now_real:", now_real)
+    print("yesterday:", yesterday)
+
+    ws = gs_connect()
+    if not ws:
+        return jsonify(ok=False, error="no sheet connection")
+
+    activity = get_activity_time_for_day(ws, yesterday)
+
+    print("activity from sheet:", activity)
+
+    return jsonify(
+        ok=True,
+        now=str(now_real),
+        yesterday=str(yesterday),
+        activity=activity
+    )
+
 def manual_log():
     mode = current_mode()
     clock = now_for_mode(mode)
@@ -728,6 +753,7 @@ def sim_start():
     return jsonify(ok=True)
 
 @app.route("/api/sim/stop", methods=["POST"])
+
 def sim_stop():
     set_meta("sim_enabled", "0")
     set_meta("sim_now_iso", "")
