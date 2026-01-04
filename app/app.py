@@ -733,7 +733,7 @@ def sim_stop():
     set_meta("sim_now_iso", "")
     return jsonify(ok=True)
 
-@app.route("/api/test-calendar", methods=["POST"])
+@app.route("/api/test-calendar", methods=["GET", "POST"])
 def test_calendar():
     ws = gs_connect()
     if ws is None:
