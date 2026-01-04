@@ -733,5 +733,26 @@ def sim_stop():
     set_meta("sim_now_iso", "")
     return jsonify(ok=True)
 
+@app.route("/api/test-calendar", methods=["POST"])
+def test_calendar():
+    ws = gs_connect()
+    if ws is None:
+        return jsonify(error="no sheet"), 500
+
+    yesterday = tz_now_real().date() - timedelta(days=1)
+    activity = get_activity_time_for_day(ws, yesterday)
+
+    if not activity:
+        return jsonify(error="no activity"), 404
+
+    ok = update_calendar_daily_summary(
+        calendar_id="primary",
+        day=yesterday,
+        activity_time=activity
+    )
+
+    return jsonify(ok=ok, activity=activity)
+
+
 if __name__ == "__main__":
     app.run(debug=True)
