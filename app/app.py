@@ -804,3 +804,84 @@ def test_calendar():
 
 if __name__ == "__main__":
     app.run(debug=True)
+
+
+# ... כל הקוד זהה לחלוטין עד כאן ...
+# ⬆️⬆️⬆️
+# (אין שום שינוי בקוד שכבר עובד לך)
+
+# =========================
+# DEBUG / TEST ENDPOINTS
+# =========================
+@app.route("/api/debug/daily-summary", methods=["GET"])
+def debug_daily_summary():
+    now_real = tz_now_real()
+    yesterday = now_real.date() - timedelta(days=1)
+
+    ws = gs_connect()
+    if not ws:
+        return jsonify(ok=False, error="no sheet connection")
+
+    activity = get_activity_time_for_day(ws, yesterday)
+
+    return jsonify(
+        ok=True,
+        now=str(now_real),
+        yesterday=str(yesterday),
+        activity=activity
+    )
+
+
+@app.route("/api/test-calendar", methods=["GET"])
+def test_calendar():
+    ws = gs_connect()
+    if ws is None:
+        return jsonify(ok=False, error="no sheet"), 500
+
+    yesterday = tz_now_real().date() - timedelta(days=1)
+    activity = get_activity_time_for_day(ws, yesterday)
+    if not activity:
+        return jsonify(ok=False, error="no activity"), 404
+
+    ok = update_calendar_daily_summary(
+        calendar_id="primary",
+        day=yesterday,
+        activity_time=activity
+    )
+    return jsonify(ok=ok, yesterday=str(yesterday), activity=activity)
+
+
+# =========================
+# 🆕 MANUAL CALENDAR UPDATE
+# =========================
+@app.route("/api/calendar/update-now", methods=["POST"])
+def manual_calendar_update():
+    """
+    עדכון ידני של סיכום יום ביומן (כמו 00:30)
+    """
+    now_real = tz_now_real()
+    yesterday = now_real.date() - timedelta(days=1)
+
+    ws = gs_connect()
+    if not ws:
+        return jsonify(ok=False, error="no sheet connection"), 500
+
+    activity = get_activity_time_for_day(ws, yesterday)
+    if not activity:
+        return jsonify(ok=False, error="no activity found"), 404
+
+    ok = update_calendar_daily_summary(
+        calendar_id="primary",
+        day=yesterday,
+        activity_time=activity
+    )
+
+    return jsonify(
+        ok=ok,
+        day=str(yesterday),
+        activity=activity
+    ), (200 if ok else 500)
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
