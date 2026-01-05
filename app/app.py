@@ -277,9 +277,12 @@ def update_calendar_daily_summary(day, activity):
 # ROUTES
 # =========================
 @app.route("/")
-def ui():
-    return "OK"
 
+
+@app.route("/ui")
+def ui():
+
+    return render_template("index.html")
 @app.route("/api/debug/daily-summary")
 def debug_daily_summary():
     now = tz_now_real()
