@@ -9,7 +9,9 @@ from flask import Flask, jsonify, render_template, request
 # =========================
 # APP
 # =========================
-app = Flask(__name__)
+
+app = Flask(__name__, template_folder="templates")
+
 TZ = pytz.timezone("Asia/Jerusalem")
 
 # =========================
