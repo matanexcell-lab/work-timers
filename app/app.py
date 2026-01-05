@@ -17,8 +17,8 @@ TZ = pytz.timezone("Asia/Jerusalem")
 # =========================
 TIMER_COUNT = 2
 RESET_HOUR = 5
-FIRST_LOG_HOUR = 8
-LAST_LOG_HOUR = 24
+FIRST_LOG_HOUR = 8          # auto log window start
+LAST_LOG_HOUR = 23          # inclusive
 
 SPREADSHEET_NAME = "Time Tracking"
 WORKSHEET_NAME = "Log"
@@ -68,18 +68,23 @@ def init_db():
     defaults = {
         "sim_enabled": "0",
         "sim_now_iso": "",
+
         "last_log_mode": "",
         "last_log_ok": "",
         "last_log_msg": "",
         "last_log_at_iso": "",
+
         "last_auto_logged_hour_real": "",
         "last_auto_logged_day_real": "",
         "last_auto_logged_hour_sim": "",
         "last_auto_logged_day_sim": "",
+
         "last_reset_date_real": "",
         "last_reset_date_sim": "",
+
         "first_start_logged_date_real": "",
         "first_start_logged_date_sim": "",
+
         "daily_calendar_updated_date": "",
     }
 
@@ -122,8 +127,7 @@ def get_sim_now():
     iso = get_meta("sim_now_iso")
     if not iso:
         return None
-    dt = datetime.fromisoformat(iso)
-    return TZ.localize(dt)
+    return TZ.localize(datetime.fromisoformat(iso))
 
 def set_sim_now(dt):
     set_meta("sim_now_iso", dt.replace(tzinfo=None).isoformat(timespec="seconds"))
@@ -163,6 +167,7 @@ def ensure_daily_reset_for_mode(mode, dt):
 # TIMERS
 # =========================
 def fmt(sec):
+    sec = max(0, int(sec))
     h = sec // 3600
     m = (sec % 3600) // 60
     s = sec % 60
@@ -188,9 +193,40 @@ def timer_total_seconds(mode, i, dt):
     if mode == "real":
         return elapsed + int(tz_now_real().timestamp() - t["start_epoch"])
 
-    start = datetime.fromisoformat(t["start_sim_iso"])
-    start = TZ.localize(start)
+    start = TZ.localize(datetime.fromisoformat(t["start_sim_iso"]))
     return elapsed + int((dt - start).total_seconds())
+
+def set_timer_seconds(mode, i, new_seconds, dt):
+    t = timer_row(mode, i)
+    if not t:
+        return False, "missing"
+
+    running = bool(t["running"])
+    new_seconds = max(0, int(new_seconds))
+
+    conn = db()
+    cur = conn.cursor()
+
+    if running and ALLOW_EDIT_WHILE_RUNNING:
+        if mode == "real":
+            cur.execute("""
+                UPDATE timers SET elapsed=?, start_epoch=?, start_sim_iso=NULL
+                WHERE mode=? AND timer_id=?
+            """, (new_seconds, tz_now_real().timestamp(), mode, i))
+        else:
+            cur.execute("""
+                UPDATE timers SET elapsed=?, start_sim_iso=?, start_epoch=NULL
+                WHERE mode=? AND timer_id=?
+            """, (new_seconds, dt.replace(tzinfo=None).isoformat(timespec="seconds"), mode, i))
+    else:
+        cur.execute("""
+            UPDATE timers SET running=0, elapsed=?, start_epoch=NULL, start_sim_iso=NULL
+            WHERE mode=? AND timer_id=?
+        """, (new_seconds, mode, i))
+
+    conn.commit()
+    conn.close()
+    return True, "ok"
 
 # =========================
 # GOOGLE SHEETS
@@ -217,18 +253,74 @@ def gs_connect():
             "https://www.googleapis.com/auth/drive"
         ]
     )
-    gc = gspread.authorize(creds)
-    WS = gc.open(SPREADSHEET_NAME).worksheet(WORKSHEET_NAME)
+    WS = gspread.authorize(creds).open(SPREADSHEET_NAME).worksheet(WORKSHEET_NAME)
     return WS
 
-def get_activity_time_for_day(ws, day):
-    date_str = day.strftime("%d/%m/%Y")
-    headers = ws.row_values(3)
-    if date_str not in headers:
-        return None
+def target_hour_and_date(dt):
+    if dt.hour < FIRST_LOG_HOUR:
+        return 23, dt.date() - timedelta(days=1)
+    return min(dt.hour, 23), dt.date()
 
-    col = headers.index(date_str) + 1
-    return ws.cell(22, col).value or "00:00:00"
+def sheet_row_for_hour(hour):
+    return max(7, min(22, 7 + (hour - 8)))
+
+def write_two_timers(ws, row, col, mode, dt):
+    ws.update_cell(row, col, fmt(timer_total_seconds(mode, 1, dt)))
+    ws.update_cell(row, col + 1, fmt(timer_total_seconds(mode, 2, dt)))
+
+def log_to_sheet(mode, dt, force=False):
+    ws = gs_connect()
+    if not ws:
+        return False, "no sheet"
+
+    hour, day = target_hour_and_date(dt)
+    key_h = f"last_auto_logged_hour_{mode}"
+    key_d = f"last_auto_logged_day_{mode}"
+
+    if not force and get_meta(key_h) == str(hour) and get_meta(key_d) == day.isoformat():
+        return True, "skip"
+
+    headers = ws.row_values(3)
+    ds = day.strftime("%d/%m/%Y")
+    if ds not in headers:
+        return False, "date not found"
+
+    col = headers.index(ds) + 1
+    row = sheet_row_for_hour(hour)
+
+    write_two_timers(ws, row, col, mode, dt)
+
+    set_meta(key_h, str(hour))
+    set_meta(key_d, day.isoformat())
+    return True, "logged"
+
+def log_start_time_if_needed(mode, dt):
+    if dt.hour < RESET_HOUR:
+        return
+
+    ws = gs_connect()
+    if not ws:
+        return
+
+    _, day = target_hour_and_date(dt)
+    key = f"first_start_logged_date_{mode}"
+    if get_meta(key) == day.isoformat():
+        return
+
+    headers = ws.row_values(3)
+    ds = day.strftime("%d/%m/%Y")
+    if ds not in headers:
+        return
+
+    ws.update_cell(4, headers.index(ds) + 1, dt.strftime("%H:%M"))
+    set_meta(key, day.isoformat())
+
+def get_activity_time_for_day(ws, day):
+    headers = ws.row_values(3)
+    ds = day.strftime("%d/%m/%Y")
+    if ds not in headers:
+        return None
+    return ws.cell(22, headers.index(ds) + 1).value or "00:00:00"
 
 # =========================
 # GOOGLE CALENDAR
@@ -241,9 +333,7 @@ def get_calendar_service():
     if not raw:
         return None
     info = json.loads(raw)
-    creds = Credentials.from_service_account_info(
-        info, scopes=["https://www.googleapis.com/auth/calendar"]
-    )
+    creds = Credentials.from_service_account_info(info, scopes=["https://www.googleapis.com/auth/calendar"])
     return build("calendar", "v3", credentials=creds)
 
 def update_calendar_daily_summary(day, activity):
@@ -264,13 +354,8 @@ def update_calendar_daily_summary(day, activity):
     for ev in events:
         if ev.get("summary") == "סיכום יום":
             ev["description"] = f"זמן שהיית בפעילות- {activity}"
-            svc.events().update(
-                calendarId="primary",
-                eventId=ev["id"],
-                body=ev
-            ).execute()
+            svc.events().update(calendarId="primary", eventId=ev["id"], body=ev).execute()
             return True
-
     return False
 
 # =========================
@@ -278,33 +363,59 @@ def update_calendar_daily_summary(day, activity):
 # =========================
 @app.route("/")
 def ui():
-    return "OK"
+    return render_template("index.html")
+
+@app.route("/api/status")
+def status():
+    if sim_enabled():
+        s = get_sim_now()
+        if s:
+            set_sim_now(s + timedelta(seconds=1))
+
+    ensure_daily_reset_for_mode("real", tz_now_real())
+    ensure_daily_reset_for_mode("sim", get_sim_now())
+
+    now = tz_now_real()
+
+    # AUTO LOG
+    if FIRST_LOG_HOUR <= now.hour <= LAST_LOG_HOUR:
+        log_to_sheet("real", now)
+
+    # CALENDAR AUTO UPDATE @ 00:30
+    if now.hour == 0 and now.minute == 30:
+        if get_meta("daily_calendar_updated_date") != now.date().isoformat():
+            ws = gs_connect()
+            if ws:
+                activity = get_activity_time_for_day(ws, now.date() - timedelta(days=1))
+                if activity:
+                    update_calendar_daily_summary(now.date() - timedelta(days=1), activity)
+                    set_meta("daily_calendar_updated_date", now.date().isoformat())
+
+    mode = current_mode()
+    clock = now_for_mode(mode)
+
+    return jsonify(
+        now=str(clock),
+        timers=[fmt(timer_total_seconds(mode, i, clock)) for i in range(1, TIMER_COUNT + 1)]
+    )
 
 @app.route("/api/debug/daily-summary")
 def debug_daily_summary():
     now = tz_now_real()
-    yesterday = now.date() - timedelta(days=1)
-
     ws = gs_connect()
-    if not ws:
-        return jsonify(ok=False, error="no sheet")
-
-    activity = get_activity_time_for_day(ws, yesterday)
-
     return jsonify(
         ok=True,
         now=str(now),
-        yesterday=str(yesterday),
-        activity=activity
+        yesterday=str(now.date() - timedelta(days=1)),
+        activity=get_activity_time_for_day(ws, now.date() - timedelta(days=1)) if ws else None
     )
 
 @app.route("/api/test-calendar")
 def test_calendar():
-    yesterday = tz_now_real().date() - timedelta(days=1)
     ws = gs_connect()
-    activity = get_activity_time_for_day(ws, yesterday)
-    ok = update_calendar_daily_summary(yesterday, activity)
-    return jsonify(ok=ok, activity=activity)
+    y = tz_now_real().date() - timedelta(days=1)
+    act = get_activity_time_for_day(ws, y)
+    return jsonify(ok=update_calendar_daily_summary(y, act), activity=act)
 
 if __name__ == "__main__":
     app.run(debug=True)
