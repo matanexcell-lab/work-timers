@@ -4,182 +4,126 @@
   <meta charset="UTF-8" />
   <title>Work Timers</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f4f4f4;
-      margin: 0;
-      padding: 16px;
-      text-align: center;
-    }
-
-    h1 { margin-bottom: 6px; }
-
-    .time {
-      font-size: 22px;
-      margin-bottom: 10px;
-    }
-
-    .status-box {
-      margin: 10px auto;
-      padding: 10px;
-      max-width: 420px;
-      border-radius: 8px;
-      font-size: 14px;
-    }
-
-    .ok {
-      background: #e6f7ec;
-      border: 1px solid #4caf50;
-      color: #1b5e20;
-    }
-
-    .err {
-      background: #fdecea;
-      border: 1px solid #f44336;
-      color: #b71c1c;
-    }
-
-    .timer {
-      background: white;
-      border-radius: 12px;
-      padding: 16px;
-      margin: 16px auto;
-      max-width: 360px;
-    }
-
-    .timer-time {
-      font-size: 48px;
-      margin: 12px 0;
-    }
-
-    button {
-      padding: 10px 16px;
-      margin: 4px;
-      font-size: 16px;
-      border-radius: 6px;
-      border: none;
-      cursor: pointer;
-    }
-
-    .start { background: #2e7d32; color: white; }
-    .stop  { background: #1565c0; color: white; }
-    .reset { background: #6d4c41; color: white; }
-
-    .adj { background: #546e7a; color: white; }
-
-    input {
-      padding: 8px;
-      font-size: 16px;
-      width: 80%;
-      margin-top: 8px;
-    }
+    body { font-family: sans-serif; background:#f4f4f4; text-align:center; }
+    .card { background:#fff; padding:16px; margin:12px auto; max-width:360px; border-radius:12px; }
+    .timer { font-size:42px; margin:10px 0; }
+    button { padding:8px 14px; margin:4px; font-size:16px; }
+    .ok { background:#e7f6e7; color:#1a7f1a; padding:8px; border-radius:8px; }
+    .err { background:#fde8e8; color:#b00020; padding:8px; border-radius:8px; }
+    .small { font-size:13px; opacity:0.85; }
+    input { padding:6px; font-size:16px; width:200px; text-align:center; }
   </style>
 </head>
-
 <body>
 
 <h1>⏱ Work Timers</h1>
+<div id="now"></div>
 
-<div class="time" id="now">--</div>
+<div id="sheetStatus"></div>
+<div id="calendarStatus"></div>
 
-<!-- ===== SHEET STATUS ===== -->
-<div id="sheetStatus" class="status-box"></div>
+<div id="timers"></div>
 
-<!-- ===== CALENDAR STATUS ===== -->
-<div id="calendarStatus" class="status-box"></div>
-
-<div class="timer">
-  <h2>טיימר 1</h2>
-  <div class="timer-time" id="t1">00:00:00</div>
-
-  <button class="start" onclick="post('/api/timer/1/start')">▶ Start</button>
-  <button class="stop" onclick="post('/api/timer/1/stop')">⏸ Stop</button>
-  <br/>
-  <button class="reset" onclick="post('/api/timer/1/reset')">🔄 Reset</button>
-  <br/>
-  <button class="adj" onclick="adjust(1, 300)">+5 דקות</button>
-  <button class="adj" onclick="adjust(1, -600)">-10 דקות</button>
-
-  <br/>
-  <input id="set1" placeholder="HH:MM:SS או MM:SS או HH" />
-  <br/>
-  <button onclick="setTimer(1)">Set</button>
-</div>
+<button onclick="logNow()">📤 עדכון ידני ל-Google Sheet</button>
 
 <script>
-async function fetchStatus() {
-  const res = await fetch('/api/status');
-  const data = await res.json();
-
-  document.getElementById('now').innerText = data.now_str || '--';
-  document.getElementById('t1').innerText = data.timers[0];
-
-  // ===== SHEET =====
-  const sheet = data.sheet || {};
-  const sheetDiv = document.getElementById('sheetStatus');
-
-  if (sheet.ok === "1") {
-    sheetDiv.className = "status-box ok";
-    sheetDiv.innerHTML = "✅ Google Sheet: " + (sheet.msg || "OK");
-  } else if (sheet.ok === "0") {
-    sheetDiv.className = "status-box err";
-    sheetDiv.innerHTML =
-      "❌ Google Sheet:<br/>" +
-      "<b>" + (sheet.msg || "שגיאה לא ידועה") + "</b>";
-  } else {
-    sheetDiv.innerHTML = "";
-  }
-
-  // ===== CALENDAR =====
-  const cal = data.calendar || {};
-  const calDiv = document.getElementById('calendarStatus');
-
-  if (cal.ok === "1") {
-    calDiv.className = "status-box ok";
-    calDiv.innerHTML = "✅ יומן: " + (cal.msg || "עודכן");
-  } else if (cal.ok === "0") {
-    calDiv.className = "status-box err";
-    calDiv.innerHTML =
-      "❌ יומן:<br/>" +
-      "<b>" + (cal.msg || "שגיאה לא ידועה") + "</b>";
-  } else {
-    calDiv.innerHTML = "";
-  }
+async function api(path, options={}) {
+  const res = await fetch(path, {
+    headers: { "Content-Type": "application/json" },
+    ...options
+  });
+  return res.json();
 }
 
-async function post(url, body=null) {
-  await fetch(url, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: body ? JSON.stringify(body) : null
+function renderStatus(id, data, title) {
+  if (!data || data.msg === "") {
+    document.getElementById(id).innerHTML = "";
+    return;
+  }
+  const cls = data.ok ? "ok" : "err";
+  document.getElementById(id).innerHTML =
+    `<div class="${cls}">
+      <b>${title}</b><br>
+      ${data.msg}<br>
+      <span class="small">${data.at || ""}</span>
+    </div>`;
+}
+
+function renderTimers(timers) {
+  const el = document.getElementById("timers");
+  el.innerHTML = "";
+
+  timers.forEach((t, idx) => {
+    const i = idx + 1;
+    el.innerHTML += `
+      <div class="card">
+        <h3>טיימר ${i}</h3>
+        <div class="timer">${t}</div>
+
+        <button onclick="timer(${i}, 'start')">▶ Start</button>
+        <button onclick="timer(${i}, 'stop')">⏸ Stop</button><br>
+        <button onclick="timer(${i}, 'reset')">🔄 Reset</button><br>
+
+        <button onclick="adjust(${i}, 300)">+5 דקות</button>
+        <button onclick="adjust(${i}, -600)">-10 דקות</button><br>
+
+        <input id="set${i}" placeholder="HH:MM:SS או MM:SS או HH">
+        <button onclick="setTime(${i})">Set</button>
+      </div>
+    `;
   });
 }
 
-function adjust(id, delta) {
-  post(`/api/timer/${id}/adjust`, {delta});
+async function refresh() {
+  const s = await api("/api/status");
+
+  document.getElementById("now").innerText =
+    s.now_str + (s.simulation ? " (SIM)" : " (REAL)");
+
+  renderStatus("sheetStatus", s.sheet, "Google Sheet");
+  renderStatus("calendarStatus", s.calendar, "Google Calendar");
+
+  renderTimers(s.timers);
 }
 
-function setTimer(id) {
-  const v = document.getElementById('set1').value.trim();
+async function timer(i, action) {
+  await api(`/api/timer/${i}/${action}`, { method: "POST" });
+  refresh();
+}
+
+async function adjust(i, delta) {
+  await api(`/api/timer/${i}/adjust`, {
+    method: "POST",
+    body: JSON.stringify({ delta })
+  });
+  refresh();
+}
+
+async function setTime(i) {
+  const v = document.getElementById("set"+i).value.trim();
   if (!v) return;
 
-  let parts = v.split(':').map(Number);
   let sec = 0;
+  const p = v.split(":").map(Number);
+  if (p.length === 1) sec = p[0] * 3600;
+  if (p.length === 2) sec = p[0]*60 + p[1];
+  if (p.length === 3) sec = p[0]*3600 + p[1]*60 + p[2];
 
-  if (parts.length === 3)
-    sec = parts[0]*3600 + parts[1]*60 + parts[2];
-  else if (parts.length === 2)
-    sec = parts[0]*60 + parts[1];
-  else if (parts.length === 1)
-    sec = parts[0]*3600;
-
-  post(`/api/timer/${id}/set`, {seconds: sec});
+  await api(`/api/timer/${i}/set`, {
+    method: "POST",
+    body: JSON.stringify({ seconds: sec })
+  });
+  refresh();
 }
 
-setInterval(fetchStatus, 1000);
-fetchStatus();
+async function logNow() {
+  await api("/api/log-now", { method: "POST" });
+  refresh();
+}
+
+setInterval(refresh, 1000);
+refresh();
 </script>
 
 </body>
