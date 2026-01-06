@@ -8,7 +8,9 @@ from flask import Flask, jsonify, render_template, request
 
 
 
-app = Flask(name, template_folder="templates")
+app = Flask(__name__, template_folder="templates")
+
+
 TZ = pytz.timezone("Asia/Jerusalem")
 
 # =========================
@@ -24,9 +26,9 @@ LAST_LOG_HOUR = 24      # (kept for clarity; logic uses 08..23)
 SPREADSHEET_NAME = "Time Tracking"
 WORKSHEET_NAME = "Log"
 
-True  -> allow Set/+5/-10 while running
+#True  -> allow Set/+5/-10 while running
 
-False -> block edits while running
+#False -> block edits while running
 
 ALLOW_EDIT_WHILE_RUNNING = True
 
