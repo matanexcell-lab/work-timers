@@ -483,8 +483,8 @@ def update_calendar_daily_summary(calendar_id: str, day: date, activity_time: st
     if service is None:
         return False
 
-    start = TZ.localize(datetime.combine(day, datetime.min.time()))
-    end = start + timedelta(days=1)
+    start = TZ.localize(datetime.combine(day, datetime.min.time())) - timedelta(hours=2)
+end = start + timedelta(days=2)
 
     events = service.events().list(
         calendarId=calendar_id,
