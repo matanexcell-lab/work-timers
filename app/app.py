@@ -611,7 +611,7 @@ def start_timer(i):
     mode = current_mode()
     clock = now_for_mode(mode)
 
-    # ✅ התיקון: Start לא ייכשל בגלל כתיבה לשיטס (שורה 4)
+    # ✅ תיקון: Start לא ייכשל בגלל כתיבה לשיטס (שורה 4)
     try:
         log_start_time_if_needed(mode, clock)
     except Exception as e:
