@@ -22,6 +22,7 @@
     input[type="text"]{font-size:18px;padding:12px 14px;border-radius:10px;border:1px solid #ccc;min-width:220px;text-align:center}
     .btn-set{background:#607d8b;color:#fff;min-width:90px}
     .biglog{background:#6a1b9a;color:#fff;font-size:20px;padding:14px 18px;border-radius:12px;width:100%}
+    .bigcal{background:#ff8f00;color:#fff;font-size:20px;padding:14px 18px;border-radius:12px;width:100%}
     .hint{font-size:13px;color:#666;margin-top:6px}
     .okbar{background:#e8f5e9;color:#1b5e20;border:1px solid #a5d6a7;padding:10px;border-radius:12px;margin:10px auto;max-width:420px;font-weight:bold}
     .errbar{background:#ffebee;color:#b71c1c;border:1px solid #ef9a9a;padding:10px;border-radius:12px;margin:10px auto;max-width:420px;font-weight:bold}
@@ -86,6 +87,14 @@
     <button class="biglog" onclick="logNow()">✏️ עדכון Google Sheet ידני</button>
     <div class="hint">
       העדכון נכתב לפי מצב נוכחי (אמיתי/סימולציה) – לשני טיימרים בשני תאים.
+    </div>
+  </div>
+
+  <!-- 🆕 GOOGLE CALENDAR MANUAL -->
+  <div class="card">
+    <button class="bigcal" onclick="calendarUpdateNow()">📅 עדכון יומן ידני (סיכום יום)</button>
+    <div class="hint">
+      מעדכן את אירוע “סיכום יום” של אתמול ביומן, עם זמן הפעילות מה-Sheet.
     </div>
   </div>
 
@@ -216,7 +225,7 @@ async function resetTimer(i){
   try{
     const r = await fetch(`${BASE}/api/timer/${i}/reset`, {method:"POST"});
     if(!r.ok) throw new Error(await r.text());
-    showOk("אופס לטיימר");
+    showOk("איפוס לטיימר");
     refreshStatus();
   }catch(e){
     showErr("Reset נכשל");
@@ -278,6 +287,22 @@ async function logNow(){
     refreshStatus();
   }catch(e){
     showErr("שגיאה בעדכון");
+    console.error(e);
+  }
+}
+
+// ---------- 🆕 google calendar manual ----------
+async function calendarUpdateNow(){
+  try{
+    const r = await fetch(`${BASE}/api/calendar/update-now`, {method:"POST"});
+    const d = await r.json();
+    if(!r.ok || !d.ok){
+      showErr(d.error || "שגיאה בעדכון היומן");
+      return;
+    }
+    showOk(`עודכן יומן: ${d.day} (${d.activity})`);
+  }catch(e){
+    showErr("שגיאה בעדכון היומן");
     console.error(e);
   }
 }
