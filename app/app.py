@@ -1,3 +1,4 @@
+# app.py
 import os
 import json
 import sqlite3
@@ -18,15 +19,22 @@ TZ = pytz.timezone("Asia/Jerusalem")
 TIMER_COUNT = 2
 
 RESET_HOUR = 5          # daily reset at 05:00
-FIRST_LOG_HOUR = 8      # auto log window start
-LAST_LOG_HOUR = 24      # kept for clarity; logic uses 08..23
+FIRST_LOG_HOUR = 8      # auto log window start (08)
+LAST_LOG_HOUR = 24      # requirement wording; logic clamps to 23 for sheet row mapping
 
 SPREADSHEET_NAME = "Time Tracking"
 WORKSHEET_NAME = "Log"
 
+# Calendar
+DEFAULT_CALENDAR_ID = os.getenv("CALENDAR_ID", "היומן שלי")  # ✅ התיקון: היומן שבו יש "סיכום יום"
+CAL_EVENT_SUMMARY = "סיכום יום"
+
 # True  -> allow Set/+5/-10 while running
 # False -> block edits while running
 ALLOW_EDIT_WHILE_RUNNING = True
+
+# Auto log on the hour (recommended to be triggered by polling /api/status)
+AUTO_LOG_SECOND_WINDOW = 3  # trigger when seconds in [0..2]
 
 # =========================
 # SQLITE
@@ -82,7 +90,12 @@ def init_db():
         "last_log_msg": "",
         "last_log_at_iso": "",
 
-        # Auto log guards (per mode)
+        # last calendar update result (for UI)
+        "last_cal_ok": "",
+        "last_cal_msg": "",
+        "last_cal_at_iso": "",
+
+        # AUTO sheet log guards (per mode)
         "last_auto_logged_hour_real": "",
         "last_auto_logged_day_real": "",
         "last_auto_logged_hour_sim": "",
@@ -98,18 +111,6 @@ def init_db():
 
         # daily calendar guard (once per day)
         "daily_calendar_updated_date": "",  # YYYY-MM-DD
-
-        # Status blocks for UI
-        "sheet_status": "init",
-        "sheet_last_ok": "",
-        "sheet_last_msg": "",
-        "sheet_last_at_iso": "",
-
-        "calendar_status": "init",
-        "calendar_last_ok": "",
-        "calendar_last_msg": "",
-        "calendar_last_error": "",
-        "calendar_last_at_iso": "",
     }
 
     for k, v in defaults.items():
@@ -139,25 +140,6 @@ def set_meta(k: str, v: str):
     cur.execute("INSERT OR REPLACE INTO meta(k, v) VALUES(?, ?)", (k, v))
     conn.commit()
     conn.close()
-
-
-def now_iso():
-    return datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
-
-
-def set_sheet_ui_status(ok: bool, msg: str):
-    set_meta("sheet_status", "ok" if ok else "error")
-    set_meta("sheet_last_ok", "1" if ok else "0")
-    set_meta("sheet_last_msg", msg)
-    set_meta("sheet_last_at_iso", now_iso())
-
-
-def set_calendar_ui_status(ok: bool, msg: str, err: str = ""):
-    set_meta("calendar_status", "ok" if ok else "error")
-    set_meta("calendar_last_ok", "1" if ok else "0")
-    set_meta("calendar_last_msg", msg)
-    set_meta("calendar_last_error", err or "")
-    set_meta("calendar_last_at_iso", now_iso())
 
 
 # =========================
@@ -206,6 +188,16 @@ def should_update_daily_summary(now_dt: datetime) -> bool:
             set_meta("daily_calendar_updated_date", today)
             return True
     return False
+
+
+def is_on_the_hour(dt: datetime) -> bool:
+    """
+    Auto log should happen each hour on the hour between 08..23
+    We accept a small seconds window because /api/status is polled.
+    """
+    if dt is None:
+        return False
+    return dt.minute == 0 and 0 <= dt.second < AUTO_LOG_SECOND_WINDOW
 
 
 # =========================
@@ -356,30 +348,25 @@ def gs_connect():
         WS = None
         return None
 
-    try:
-        import gspread
-        from google.oauth2.service_account import Credentials
+    import gspread
+    from google.oauth2.service_account import Credentials
 
-        info = json.loads(raw)
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ]
-        creds = Credentials.from_service_account_info(info, scopes=scopes)
-        gc = gspread.authorize(creds)
-        WS = gc.open(SPREADSHEET_NAME).worksheet(WORKSHEET_NAME)
-        return WS
-    except Exception as e:
-        WS = None
-        set_sheet_ui_status(False, f"gs_connect failed: {e}")
-        return None
+    info = json.loads(raw)
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(info, scopes=scopes)
+    gc = gspread.authorize(creds)
+    WS = gc.open(SPREADSHEET_NAME).worksheet(WORKSHEET_NAME)
+    return WS
 
 
 def target_hour_and_date(dt: datetime):
     """
     Rules:
     - 00:00–07:59 -> previous day @ 23
-    - hour > 23 -> clamp to 23
+    - hour > 23 -> clamp to 23  (covers "24" requirement and more)
     - else -> dt.hour
     """
     if dt.hour < FIRST_LOG_HOUR:
@@ -390,7 +377,7 @@ def target_hour_and_date(dt: datetime):
 
 
 def sheet_row_for_hour(hour: int) -> int:
-    # row 7 = 08:00, row 22 = 23:00
+    # row 7 = 08:00, row 22 = 23:00 (23-24)
     row = 7 + (hour - 8)
     if row < 7:
         row = 7
@@ -401,7 +388,7 @@ def sheet_row_for_hour(hour: int) -> int:
 
 def write_two_timers_into_sheet(ws, row: int, col: int, mode: str, clock_dt: datetime):
     """
-    writes 2 timers to 2 cells:
+    ✅ updates 2 timers into 2 adjacent cells:
     Timer1 in col, Timer2 in col+1
     """
     t1 = fmt(timer_total_seconds(mode, 1, clock_dt))
@@ -413,7 +400,7 @@ def write_two_timers_into_sheet(ws, row: int, col: int, mode: str, clock_dt: dat
 def log_to_sheet(mode: str, clock_dt: datetime, force=False):
     ws = gs_connect()
     if ws is None:
-        return False, "Google creds missing / sheet connect failed"
+        return False, "Google creds missing"
 
     if clock_dt is None:
         return False, "clock missing"
@@ -440,12 +427,12 @@ def log_to_sheet(mode: str, clock_dt: datetime, force=False):
 
     set_meta(key_h, str(hour))
     set_meta(key_d, day_str)
-    return True, f"logged hour={hour} day={date_str}"
+    return True, f"logged hour={hour} day={day_str}"
 
 
 def log_start_time_if_needed(mode: str, clock_dt: datetime):
     """
-    Write start time (HH:MM) to row 4 for the DATE of clock_dt,
+    ✅ Writes start time (HH:MM) to row 4 for the DATE of clock_dt,
     first Start after 05:00. Works for real and sim.
     One per day per mode.
     """
@@ -502,39 +489,39 @@ def get_calendar_service():
     if not raw:
         return None
 
-    try:
-        from googleapiclient.discovery import build
-        from google.oauth2.service_account import Credentials
+    from googleapiclient.discovery import build
+    from google.oauth2.service_account import Credentials
 
-        info = json.loads(raw)
-        creds = Credentials.from_service_account_info(info, scopes=CALENDAR_SCOPES)
-        return build("calendar", "v3", credentials=creds)
-    except Exception as e:
-        set_calendar_ui_status(False, "calendar service init failed", str(e))
-        return None
+    info = json.loads(raw)
+    creds = Credentials.from_service_account_info(info, scopes=CALENDAR_SCOPES)
+    return build("calendar", "v3", credentials=creds)
 
 
-def update_calendar_daily_summary(calendar_id: str, day: date, activity_time: str) -> bool:
+def update_calendar_daily_summary(calendar_id: str, day: date, activity_time: str) -> (bool, str):
     """
     מעדכן את אירוע 'סיכום יום' בתאריך נתון:
     מוסיף/מחליף שורה: זמן שהיית בפעילות- HH:MM:SS
     """
     service = get_calendar_service()
     if service is None:
-        raise RuntimeError("calendar service is None (missing creds?)")
+        return False, "calendar creds missing"
 
+    # search a wide enough range to catch timezone edge cases
     start = TZ.localize(datetime.combine(day, datetime.min.time())) - timedelta(hours=2)
     end = start + timedelta(days=2)
 
-    events = service.events().list(
-        calendarId=calendar_id,
-        timeMin=start.isoformat(),
-        timeMax=end.isoformat(),
-        singleEvents=True
-    ).execute().get("items", [])
+    try:
+        events = service.events().list(
+            calendarId=calendar_id,
+            timeMin=start.isoformat(),
+            timeMax=end.isoformat(),
+            singleEvents=True
+        ).execute().get("items", [])
+    except Exception as e:
+        return False, f"calendar list error: {e}"
 
     for ev in events:
-        if ev.get("summary") == "סיכום יום":
+        if ev.get("summary") == CAL_EVENT_SUMMARY:
             desc = ev.get("description", "") or ""
             lines = desc.splitlines()
 
@@ -549,15 +536,17 @@ def update_calendar_daily_summary(calendar_id: str, day: date, activity_time: st
 
             ev["description"] = "\n".join(lines)
 
-            service.events().update(
-                calendarId=calendar_id,
-                eventId=ev["id"],
-                body=ev
-            ).execute()
+            try:
+                service.events().update(
+                    calendarId=calendar_id,
+                    eventId=ev["id"],
+                    body=ev
+                ).execute()
+                return True, "updated"
+            except Exception as e:
+                return False, f"calendar update error: {e}"
 
-            return True
-
-    return False
+    return False, "event not found"
 
 
 # =========================
@@ -565,11 +554,14 @@ def update_calendar_daily_summary(calendar_id: str, day: date, activity_time: st
 # =========================
 def should_auto_log_for_mode(mode: str, clock_dt: datetime) -> bool:
     """
-    Auto log window: 08:00..23:59
+    ✅ Auto log only between 08..23 AND only on the hour.
+    (Requirement says 08–24; hour 24 is clamped to 23 in sheet logic anyway)
     """
     if clock_dt is None:
         return False
-    return FIRST_LOG_HOUR <= clock_dt.hour <= 23
+    if not (FIRST_LOG_HOUR <= clock_dt.hour <= 23):
+        return False
+    return is_on_the_hour(clock_dt)
 
 
 # =========================
@@ -596,46 +588,45 @@ def status():
     ensure_daily_reset_for_mode("real", tz_now_real())
     ensure_daily_reset_for_mode("sim", get_sim_now())
 
-    # auto log for real & sim (independent) - never crash the app
-    try:
-        real_clock = tz_now_real()
-        if should_auto_log_for_mode("real", real_clock):
-            h, d = target_hour_and_date(real_clock)
-            if get_meta("last_auto_logged_hour_real") != str(h) or get_meta("last_auto_logged_day_real") != d.isoformat():
-                ok, msg = log_to_sheet("real", real_clock, force=False)
-                set_sheet_ui_status(ok, msg)
-    except Exception as e:
-        set_sheet_ui_status(False, f"auto log real failed: {e}")
+    # auto log for real & sim (independent) - on the hour
+    real_clock = tz_now_real()
+    sim_clock = get_sim_now()
 
-    try:
-        if sim_enabled():
-            sim_clock = get_sim_now()
-            if should_auto_log_for_mode("sim", sim_clock):
-                h, d = target_hour_and_date(sim_clock)
-                if get_meta("last_auto_logged_hour_sim") != str(h) or get_meta("last_auto_logged_day_sim") != d.isoformat():
-                    ok, msg = log_to_sheet("sim", sim_clock, force=False)
-                    set_sheet_ui_status(ok, msg)
-    except Exception as e:
-        set_sheet_ui_status(False, f"auto log sim failed: {e}")
+    sheet_real = {"ok": None, "msg": ""}
+    sheet_sim = {"ok": None, "msg": ""}
+
+    if should_auto_log_for_mode("real", real_clock):
+        ok, msg = log_to_sheet("real", real_clock, force=False)
+        sheet_real = {"ok": ok, "msg": msg}
+
+    if sim_enabled() and should_auto_log_for_mode("sim", sim_clock):
+        ok, msg = log_to_sheet("sim", sim_clock, force=False)
+        sheet_sim = {"ok": ok, "msg": msg}
 
     # DAILY CALENDAR SUMMARY (00:30) - runs once per day
+    cal_status = {"ok": None, "msg": ""}
+
     now_real = tz_now_real()
     if should_update_daily_summary(now_real):
         yesterday = now_real.date() - timedelta(days=1)
-        try:
-            ws = gs_connect()
-            if not ws:
-                raise RuntimeError("no sheet connection")
+        ws = gs_connect()
+        if ws:
             activity = get_activity_time_for_day(ws, yesterday)
-            if not activity:
-                raise RuntimeError("no activity found in sheet for yesterday")
-            ok = update_calendar_daily_summary(calendar_id="primary", day=yesterday, activity_time=activity)
-            if ok:
-                set_calendar_ui_status(True, f"daily calendar updated for {yesterday}", "")
+            if activity:
+                ok, msg = update_calendar_daily_summary(
+                    calendar_id=DEFAULT_CALENDAR_ID,   # ✅ "היומן שלי"
+                    day=yesterday,
+                    activity_time=activity
+                )
+                cal_status = {"ok": ok, "msg": msg}
+                # store for UI
+                set_meta("last_cal_ok", "1" if ok else "0")
+                set_meta("last_cal_msg", msg)
+                set_meta("last_cal_at_iso", now_real.strftime("%d/%m/%Y %H:%M:%S"))
             else:
-                set_calendar_ui_status(False, "event 'סיכום יום' not found", "")
-        except Exception as e:
-            set_calendar_ui_status(False, "daily calendar update failed", str(e))
+                cal_status = {"ok": False, "msg": "no activity in sheet for yesterday"}
+        else:
+            cal_status = {"ok": False, "msg": "no sheet connection"}
 
     # which timers to display? current mode
     mode = current_mode()
@@ -648,27 +639,25 @@ def status():
         "mode": mode,
         "timers": timers,
 
-        # UI: manual log (your old block, still kept)
-        "last_log": {
-            "mode": get_meta("last_log_mode"),
-            "ok": get_meta("last_log_ok"),
-            "msg": get_meta("last_log_msg"),
-            "at": get_meta("last_log_at_iso"),
+        # separate statuses (useful for UI)
+        "sheet_status": {
+            "real": sheet_real,
+            "sim": sheet_sim,
+            "last_manual": {
+                "mode": get_meta("last_log_mode"),
+                "ok": get_meta("last_log_ok"),
+                "msg": get_meta("last_log_msg"),
+                "at": get_meta("last_log_at_iso"),
+            }
         },
-
-        # UI: separated statuses
-        "sheet": {
-            "status": get_meta("sheet_status"),
-            "ok": get_meta("sheet_last_ok"),
-            "msg": get_meta("sheet_last_msg"),
-            "at": get_meta("sheet_last_at_iso"),
-        },
-        "calendar": {
-            "status": get_meta("calendar_status"),
-            "ok": get_meta("calendar_last_ok"),
-            "msg": get_meta("calendar_last_msg"),
-            "last_error": get_meta("calendar_last_error"),
-            "at": get_meta("calendar_last_at_iso"),
+        "calendar_status": {
+            "calendar_id": DEFAULT_CALENDAR_ID,
+            "last": {
+                "ok": get_meta("last_cal_ok"),
+                "msg": get_meta("last_cal_msg"),
+                "at": get_meta("last_cal_at_iso"),
+            },
+            "auto_today": cal_status
         }
     })
 
@@ -681,11 +670,10 @@ def start_timer(i):
     mode = current_mode()
     clock = now_for_mode(mode)
 
-    # ✅ Start לא ייכשל בגלל כתיבה לשיטס (שורה 4)
+    # ✅ Start-time write (row 4) must not break Start
     try:
         log_start_time_if_needed(mode, clock)
     except Exception as e:
-        # don't crash
         print("⚠️ start-time write skipped:", e)
 
     t = timer_row(mode, i)
@@ -767,6 +755,7 @@ def adjust_timer(i):
     mode = current_mode()
     clock = now_for_mode(mode)
     current = timer_total_seconds(mode, i, clock)
+
     ok, msg = set_timer_seconds(mode, i, current + delta, clock)
     if not ok:
         return jsonify(ok=False, error=msg), 400
@@ -785,6 +774,7 @@ def set_timer(i):
 
     mode = current_mode()
     clock = now_for_mode(mode)
+
     ok, msg = set_timer_seconds(mode, i, seconds, clock)
     if not ok:
         return jsonify(ok=False, error=msg), 400
@@ -796,23 +786,19 @@ def set_timer(i):
 @app.route("/api/log-now", methods=["POST"])
 def manual_log():
     """
-    Manual write to Google Sheet + UI feedback
+    ✅ Manual write to Google Sheet + UI feedback
     """
     mode = current_mode()
     clock = now_for_mode(mode)
 
-    try:
-        ok, msg = log_to_sheet(mode, clock, force=True)
-    except Exception as e:
-        ok, msg = False, f"manual log failed: {e}"
+    ok, msg = log_to_sheet(mode, clock, force=True)
 
     # persist for UI
     set_meta("last_log_mode", mode)
     set_meta("last_log_ok", "1" if ok else "0")
     set_meta("last_log_msg", msg)
-    set_meta("last_log_at_iso", now_iso())
+    set_meta("last_log_at_iso", tz_now_real().strftime("%d/%m/%Y %H:%M:%S"))
 
-    set_sheet_ui_status(ok, msg)
     return jsonify(ok=ok, message=msg), (200 if ok else 500)
 
 
@@ -850,6 +836,7 @@ def debug_daily_summary():
         return jsonify(ok=False, error="no sheet connection")
 
     activity = get_activity_time_for_day(ws, yesterday)
+
     return jsonify(
         ok=True,
         now=str(now_real),
@@ -860,27 +847,21 @@ def debug_daily_summary():
 
 @app.route("/api/test-calendar", methods=["GET"])
 def test_calendar():
-    try:
-        ws = gs_connect()
-        if ws is None:
-            return jsonify(ok=False, error="no sheet"), 500
+    ws = gs_connect()
+    if ws is None:
+        return jsonify(ok=False, error="no sheet"), 500
 
-        yesterday = tz_now_real().date() - timedelta(days=1)
-        activity = get_activity_time_for_day(ws, yesterday)
-        if not activity:
-            return jsonify(ok=False, error="no activity"), 404
+    yesterday = tz_now_real().date() - timedelta(days=1)
+    activity = get_activity_time_for_day(ws, yesterday)
+    if not activity:
+        return jsonify(ok=False, error="no activity"), 404
 
-        ok = update_calendar_daily_summary(
-            calendar_id="primary",
-            day=yesterday,
-            activity_time=activity
-        )
-        set_calendar_ui_status(ok, "test-calendar executed", "")
-
-        return jsonify(ok=ok, yesterday=str(yesterday), activity=activity)
-    except Exception as e:
-        set_calendar_ui_status(False, "test-calendar failed", str(e))
-        return jsonify(ok=False, error=str(e)), 500
+    ok, msg = update_calendar_daily_summary(
+        calendar_id=DEFAULT_CALENDAR_ID,  # ✅ "היומן שלי"
+        day=yesterday,
+        activity_time=activity
+    )
+    return jsonify(ok=ok, message=msg, calendar_id=DEFAULT_CALENDAR_ID, yesterday=str(yesterday), activity=activity)
 
 
 # =========================
@@ -889,38 +870,108 @@ def test_calendar():
 @app.route("/api/calendar/update-now", methods=["POST"])
 def manual_calendar_update():
     """
-    עדכון ידני של סיכום יום ביומן (כמו 00:30)
+    ✅ עדכון ידני של סיכום יום ביומן (כמו 00:30)
     """
     now_real = tz_now_real()
     yesterday = now_real.date() - timedelta(days=1)
 
+    ws = gs_connect()
+    if not ws:
+        return jsonify(ok=False, error="no sheet connection"), 500
+
+    activity = get_activity_time_for_day(ws, yesterday)
+    if not activity:
+        return jsonify(ok=False, error="no activity found"), 404
+
+    ok, msg = update_calendar_daily_summary(
+        calendar_id=DEFAULT_CALENDAR_ID,  # ✅ "היומן שלי"
+        day=yesterday,
+        activity_time=activity
+    )
+
+    # store for UI
+    set_meta("last_cal_ok", "1" if ok else "0")
+    set_meta("last_cal_msg", msg)
+    set_meta("last_cal_at_iso", now_real.strftime("%d/%m/%Y %H:%M:%S"))
+
+    return jsonify(
+        ok=ok,
+        message=msg,
+        calendar_id=DEFAULT_CALENDAR_ID,
+        day=str(yesterday),
+        activity=activity
+    ), (200 if ok else 500)
+
+
+# =========================
+# ✅ Endpoint בדיקה: מחזיר איזה יומן נמצא (שיש בו "סיכום יום")
+# =========================
+@app.route("/api/debug/find-calendar", methods=["GET"])
+def debug_find_calendar():
+    """
+    Finds which calendar(s) contain an event with summary="סיכום יום".
+    By default checks yesterday (Israel time).
+    Optional query:
+      - day=YYYY-MM-DD
+      - summary=...
+    """
+    service = get_calendar_service()
+    if service is None:
+        return jsonify(ok=False, error="calendar creds missing"), 500
+
+    summary = request.args.get("summary", CAL_EVENT_SUMMARY)
+    day_str = request.args.get("day", "")
+    if day_str:
+        try:
+            day = date.fromisoformat(day_str)
+        except Exception:
+            return jsonify(ok=False, error="bad day format, use YYYY-MM-DD"), 400
+    else:
+        day = tz_now_real().date() - timedelta(days=1)
+
+    start = TZ.localize(datetime.combine(day, datetime.min.time())) - timedelta(hours=2)
+    end = start + timedelta(days=2)
+
     try:
-        ws = gs_connect()
-        if not ws:
-            raise RuntimeError("no sheet connection")
-
-        activity = get_activity_time_for_day(ws, yesterday)
-        if not activity:
-            raise RuntimeError("no activity found")
-
-        ok = update_calendar_daily_summary(
-            calendar_id="primary",
-            day=yesterday,
-            activity_time=activity
-        )
-
-        if ok:
-            set_calendar_ui_status(True, "manual calendar updated", "")
-            return jsonify(ok=True, day=str(yesterday), activity=activity), 200
-        else:
-            set_calendar_ui_status(False, "event 'סיכום יום' not found", "")
-            return jsonify(ok=False, error="event not found", day=str(yesterday)), 404
-
+        cal_list = service.calendarList().list().execute().get("items", [])
     except Exception as e:
-        set_calendar_ui_status(False, "manual calendar update failed", str(e))
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=f"calendarList error: {e}"), 500
+
+    found = []
+
+    # check each calendar for the event (can be a bit heavy, but OK for debug)
+    for cal in cal_list:
+        cal_id = cal.get("id", "")
+        cal_name = cal.get("summary", "")
+        try:
+            events = service.events().list(
+                calendarId=cal_id,
+                timeMin=start.isoformat(),
+                timeMax=end.isoformat(),
+                singleEvents=True
+            ).execute().get("items", [])
+        except Exception:
+            continue
+
+        for ev in events:
+            if ev.get("summary") == summary:
+                found.append({
+                    "calendar_id": cal_id,
+                    "calendar_name": cal_name,
+                    "event_id": ev.get("id", ""),
+                    "event_start": ev.get("start", {}),
+                })
+                break
+
+    return jsonify(
+        ok=True,
+        checked_day=day.isoformat(),
+        summary=summary,
+        default_calendar_id=DEFAULT_CALENDAR_ID,
+        found=found
+    )
 
 
 if __name__ == "__main__":
-    # Local dev only. On Render use gunicorn.
-    app.run(debug=True)
+    # Local dev only (Render uses gunicorn)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
