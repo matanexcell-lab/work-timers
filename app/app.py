@@ -11,11 +11,9 @@ from flask import Flask, jsonify, render_template, request
 app = Flask(name, template_folder="templates")
 TZ = pytz.timezone("Asia/Jerusalem")
 
-=========================
-
-CONFIG
-
-=========================
+# =========================
+# CONFIG
+# =========================
 
 TIMER_COUNT = 2
 
@@ -32,11 +30,11 @@ False -> block edits while running
 
 ALLOW_EDIT_WHILE_RUNNING = True
 
-=========================
+#=========================
 
-SQLITE
+#SQLITE
 
-=========================
+#=========================
 
 DB_PATH = os.getenv("DB_PATH", "/tmp/work_timers.db")
 
@@ -113,11 +111,11 @@ conn.close()
 
 init_db()
 
-=========================
+#=========================
 
-META HELPERS
+#META HELPERS
 
-=========================
+#=========================
 
 def get_meta(k: str) -> str:
 conn = db()
@@ -134,11 +132,11 @@ cur.execute("INSERT OR REPLACE INTO meta(k, v) VALUES(?, ?)", (k, v))
 conn.commit()
 conn.close()
 
-=========================
+#=========================
 
-TIME HELPERS
+#TIME HELPERS
 
-=========================
+#=========================
 
 def tz_now_real():
 return datetime.now(TZ)
@@ -178,11 +176,11 @@ set_meta("daily_calendar_updated_date", today)
 return True
 return False
 
-=========================
+#=========================
 
-RESET LOGIC (05:00) - PER MODE
+#RESET LOGIC (05:00) - PER MODE
 
-=========================
+#=========================
 
 def ensure_daily_reset_for_mode(mode: str, clock_dt: datetime):
 if clock_dt is None:
@@ -210,11 +208,11 @@ conn.close()
 set_meta(key_last, today)  
 set_meta(key_start, "")  # allow start-time again
 
-=========================
+#=========================
 
-TIMER CALCULATION
+#TIMER CALCULATION
 
-=========================
+#=========================
 
 def fmt(sec: int) -> str:
 sec = max(0, int(sec))
@@ -311,11 +309,11 @@ conn.commit()
 conn.close()  
 return True, "ok"
 
-=========================
+#=========================
 
-GOOGLE SHEETS
+#GOOGLE SHEETS
 
-=========================
+#=========================
 
 WS = None
 
@@ -452,11 +450,11 @@ row = 22  # 23:00–24:00
 value = ws.cell(row, col).value  
 return value or "00:00:00"
 
-=========================
+#=========================
 
-GOOGLE CALENDAR
+#GOOGLE CALENDAR
 
-=========================
+#=========================
 
 from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
@@ -517,11 +515,11 @@ for ev in events:
 
 return False
 
-=========================
+#=========================
 
-AUTO-LOG POLICY
+#AUTO-LOG POLICY
 
-=========================
+#=========================
 
 def should_auto_log_for_mode(mode: str, clock_dt: datetime) -> bool:
 """
@@ -531,22 +529,22 @@ if clock_dt is None:
 return False
 return FIRST_LOG_HOUR <= clock_dt.hour <= 23
 
-=========================
+#=========================
 
-ROUTES (UI)
+#ROUTES (UI)
 
-=========================
+#=========================
 
 @app.route("/")
 @app.route("/ui")
 def ui():
 return render_template("index.html")
 
-=========================
+#=========================
 
-ROUTES (API)
+#ROUTES (API)
 
-=========================
+#=========================
 
 @app.route("/api/status")
 def status():
@@ -757,11 +755,11 @@ set_meta("sim_enabled", "0")
 set_meta("sim_now_iso", "")
 return jsonify(ok=True)
 
-=========================
+#=========================
 
-DEBUG / TEST ENDPOINTS
+#DEBUG / TEST ENDPOINTS
 
-=========================
+#=========================
 
 @app.route("/api/debug/daily-summary", methods=["GET"])
 def debug_daily_summary():
@@ -799,11 +797,11 @@ ok = update_calendar_daily_summary(
 )  
 return jsonify(ok=ok, yesterday=str(yesterday), activity=activity)
 
-=========================
+#=========================
 
-MANUAL CALENDAR UPDATE
+# MANUAL CALENDAR UPDATE
 
-=========================
+ # =========================
 
 @app.route("/api/calendar/update-now", methods=["POST"])
 def manual_calendar_update():
