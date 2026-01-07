@@ -1,20 +1,22 @@
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
-  <meta charset="UTF-8" />
-  <title>Work Timers</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    body { font-family: sans-serif; background:#f4f4f4; text-align:center; }
-    .card { background:#fff; padding:16px; margin:12px auto; max-width:360px; border-radius:12px; }
-    .timer { font-size:42px; margin:10px 0; }
-    button { padding:8px 14px; margin:4px; font-size:16px; }
-    .ok { background:#e7f6e7; color:#1a7f1a; padding:8px; border-radius:8px; }
-    .err { background:#fde8e8; color:#b00020; padding:8px; border-radius:8px; }
-    .small { font-size:13px; opacity:0.85; }
-    input { padding:6px; font-size:16px; width:200px; text-align:center; }
-  </style>
+<meta charset="UTF-8">
+<title>Work Timers</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+body { font-family: Arial; background:#f3f3f3; text-align:center; }
+.card { background:#fff; margin:12px auto; padding:16px; max-width:380px; border-radius:12px; }
+.timer { font-size:44px; margin:10px 0; }
+button { padding:8px 14px; margin:4px; font-size:15px; }
+input { padding:6px; font-size:16px; width:220px; text-align:center; }
+.ok { background:#e6f6e6; color:#1a7f1a; padding:10px; border-radius:8px; margin:8px; }
+.err { background:#fde6e6; color:#b00020; padding:10px; border-radius:8px; margin:8px; }
+.small { font-size:12px; opacity:0.8; }
+</style>
 </head>
+
 <body>
 
 <h1>⏱ Work Timers</h1>
@@ -25,29 +27,35 @@
 
 <div id="timers"></div>
 
-<button onclick="logNow()">📤 עדכון ידני ל-Google Sheet</button>
+<div class="card">
+  <button onclick="logSheet()">📤 עדכון ידני ל-Google Sheet</button><br><br>
+  <button onclick="logCalendar()">📅 עדכון ידני ליומן</button>
+</div>
 
 <script>
-async function api(path, options={}) {
-  const res = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
+async function api(url, options={}) {
+  const res = await fetch(url, {
+    headers: {"Content-Type":"application/json"},
     ...options
   });
   return res.json();
 }
 
-function renderStatus(id, data, title) {
-  if (!data || data.msg === "") {
-    document.getElementById(id).innerHTML = "";
+function renderStatus(el, data, title) {
+  if (!data || !data.msg) {
+    document.getElementById(el).innerHTML = "";
     return;
   }
   const cls = data.ok ? "ok" : "err";
-  document.getElementById(id).innerHTML =
-    `<div class="${cls}">
+  document.getElementById(el).innerHTML = `
+    <div class="${cls}">
       <b>${title}</b><br>
       ${data.msg}<br>
+      ${data.calendar_id ? "calendar_id: "+data.calendar_id+"<br>" : ""}
+      ${data.event_id ? "event_id: "+data.event_id+"<br>" : ""}
       <span class="small">${data.at || ""}</span>
-    </div>`;
+    </div>
+  `;
 }
 
 function renderTimers(timers) {
@@ -61,14 +69,14 @@ function renderTimers(timers) {
         <h3>טיימר ${i}</h3>
         <div class="timer">${t}</div>
 
-        <button onclick="timer(${i}, 'start')">▶ Start</button>
-        <button onclick="timer(${i}, 'stop')">⏸ Stop</button><br>
-        <button onclick="timer(${i}, 'reset')">🔄 Reset</button><br>
+        <button onclick="timer(${i},'start')">▶ Start</button>
+        <button onclick="timer(${i},'stop')">⏸ Stop</button><br>
+        <button onclick="timer(${i},'reset')">🔄 Reset</button><br>
 
-        <button onclick="adjust(${i}, 300)">+5 דקות</button>
-        <button onclick="adjust(${i}, -600)">-10 דקות</button><br>
+        <button onclick="adjust(${i},300)">+5 דקות</button>
+        <button onclick="adjust(${i},-600)">-10 דקות</button><br>
 
-        <input id="set${i}" placeholder="HH:MM:SS או MM:SS או HH">
+        <input id="set${i}" placeholder="HH:MM:SS / MM:SS / HH">
         <button onclick="setTime(${i})">Set</button>
       </div>
     `;
@@ -88,14 +96,14 @@ async function refresh() {
 }
 
 async function timer(i, action) {
-  await api(`/api/timer/${i}/${action}`, { method: "POST" });
+  await api(`/api/timer/${i}/${action}`, {method:"POST"});
   refresh();
 }
 
 async function adjust(i, delta) {
   await api(`/api/timer/${i}/adjust`, {
-    method: "POST",
-    body: JSON.stringify({ delta })
+    method:"POST",
+    body:JSON.stringify({delta})
   });
   refresh();
 }
@@ -103,22 +111,26 @@ async function adjust(i, delta) {
 async function setTime(i) {
   const v = document.getElementById("set"+i).value.trim();
   if (!v) return;
-
-  let sec = 0;
   const p = v.split(":").map(Number);
-  if (p.length === 1) sec = p[0] * 3600;
-  if (p.length === 2) sec = p[0]*60 + p[1];
-  if (p.length === 3) sec = p[0]*3600 + p[1]*60 + p[2];
+  let sec = 0;
+  if (p.length===1) sec=p[0]*3600;
+  if (p.length===2) sec=p[0]*60+p[1];
+  if (p.length===3) sec=p[0]*3600+p[1]*60+p[2];
 
   await api(`/api/timer/${i}/set`, {
-    method: "POST",
-    body: JSON.stringify({ seconds: sec })
+    method:"POST",
+    body:JSON.stringify({seconds:sec})
   });
   refresh();
 }
 
-async function logNow() {
-  await api("/api/log-now", { method: "POST" });
+async function logSheet() {
+  await api("/api/log-now", {method:"POST"});
+  refresh();
+}
+
+async function logCalendar() {
+  await api("/api/calendar/update-now", {method:"POST"});
   refresh();
 }
 
