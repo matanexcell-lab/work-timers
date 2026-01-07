@@ -1,142 +1,269 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="he" dir="rtl">
 <head>
-<meta charset="UTF-8">
-<title>Work Timers</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Work Timers</title>
+  <style>
+    body { font-family: Arial, sans-serif; background:#f5f6f7; margin:0; padding:20px; }
+    .wrap { max-width: 520px; margin: 0 auto; }
+    h1 { text-align:center; margin:10px 0 6px; }
+    .now { text-align:center; color:#444; margin-bottom:14px; }
 
-<style>
-body { font-family: Arial; background:#f3f3f3; text-align:center; }
-.card { background:#fff; margin:12px auto; padding:16px; max-width:380px; border-radius:12px; }
-.timer { font-size:44px; margin:10px 0; }
-button { padding:8px 14px; margin:4px; font-size:15px; }
-input { padding:6px; font-size:16px; width:220px; text-align:center; }
-.ok { background:#e6f6e6; color:#1a7f1a; padding:10px; border-radius:8px; margin:8px; }
-.err { background:#fde6e6; color:#b00020; padding:10px; border-radius:8px; margin:8px; }
-.small { font-size:12px; opacity:0.8; }
-</style>
+    .status {
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin: 10px 0;
+      border: 1px solid #ddd;
+      background: #fff;
+    }
+    .status.bad { background:#ffe7e7; border-color:#ffb4b4; }
+    .status.good { background:#e9fff0; border-color:#a8f0c0; }
+    .status .title { font-weight:700; margin-bottom:6px; }
+    .status .msg { font-size:16px; }
+    .status .meta { margin-top:6px; color:#666; font-size:13px; }
+
+    .card {
+      background:#fff; border:1px solid #ddd; border-radius:16px;
+      padding:18px; margin:14px 0;
+      box-shadow:0 1px 3px rgba(0,0,0,.05);
+      text-align:center;
+    }
+    .timer-title { font-size:28px; font-weight:700; margin:6px 0 10px; }
+    .timer-time { font-size:60px; font-weight:800; margin:10px 0 14px; letter-spacing:1px; }
+    .row { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+    button {
+      padding: 12px 16px; border-radius:10px; border:1px solid #bbb;
+      background:#f7f7f7; cursor:pointer; font-size:18px;
+      min-width: 120px;
+    }
+    button.primary { background:#2e7d32; color:#fff; border-color:#2e7d32; }
+    button.danger { background:#1565c0; color:#fff; border-color:#1565c0; }
+    button.reset { background:#6d4c41; color:#fff; border-color:#6d4c41; }
+
+    .edit { margin-top:12px; display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap; }
+    input[type="text"]{
+      font-size:18px; padding:12px 14px; border-radius:10px; border:1px solid #bbb;
+      min-width: 260px;
+      text-align:center;
+    }
+    .small { font-size:14px; color:#666; margin-top:6px; }
+    .top-actions { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+  </style>
 </head>
-
 <body>
+<div class="wrap">
+  <h1>Work Timers ⏱️</h1>
+  <div class="now" id="nowLine">(טוען...)</div>
 
-<h1>⏱ Work Timers</h1>
-<div id="now"></div>
+  <!-- ✅ סטטוס Google Sheet כמו ביומן -->
+  <div id="sheetBox" class="status">
+    <div class="title">Google Sheet</div>
+    <div class="msg" id="sheetMsg">—</div>
+    <div class="meta" id="sheetMeta"></div>
+  </div>
 
-<div id="sheetStatus"></div>
-<div id="calendarStatus"></div>
+  <!-- ✅ סטטוס Google Calendar -->
+  <div id="calBox" class="status">
+    <div class="title">Google Calendar</div>
+    <div class="msg" id="calMsg">—</div>
+    <div class="meta" id="calMeta"></div>
+  </div>
 
-<div id="timers"></div>
+  <div class="top-actions">
+    <button id="btnLogSheet">עדכן Sheet עכשיו</button>
+    <button id="btnCalUpdate">עדכן יומן עכשיו</button>
+  </div>
 
-<div class="card">
-  <button onclick="logSheet()">📤 עדכון ידני ל-Google Sheet</button><br><br>
-  <button onclick="logCalendar()">📅 עדכון ידני ליומן</button>
+  <!-- Timer 1 -->
+  <div class="card">
+    <div class="timer-title">טיימר 1</div>
+    <div class="timer-time" id="t1">00:00:00</div>
+
+    <div class="row">
+      <button class="danger" onclick="post('/api/timer/1/stop')">Stop ⏸️</button>
+      <button class="primary" onclick="post('/api/timer/1/start')">Start ▶️</button>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <button class="reset" onclick="post('/api/timer/1/reset')">Reset 🔄</button>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <button onclick="adjust(1, +300)">+5 דקות</button>
+      <button onclick="adjust(1, -600)">-10 דקות</button>
+    </div>
+
+    <div class="edit">
+      <!-- ✅ חשוב: לא form, כדי לא "יקפוץ" -->
+      <input id="set1" type="text" placeholder="HH:MM:SS / MM:SS / HH" inputmode="numeric" />
+      <button onclick="setTime(1)">Set</button>
+    </div>
+    <div class="small">טיפ: בזמן שאתה מקליד – המסך לא ידרוס את ה־input.</div>
+  </div>
+
+  <!-- Timer 2 -->
+  <div class="card">
+    <div class="timer-title">טיימר 2</div>
+    <div class="timer-time" id="t2">00:00:00</div>
+
+    <div class="row">
+      <button class="danger" onclick="post('/api/timer/2/stop')">Stop ⏸️</button>
+      <button class="primary" onclick="post('/api/timer/2/start')">Start ▶️</button>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <button class="reset" onclick="post('/api/timer/2/reset')">Reset 🔄</button>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <button onclick="adjust(2, +300)">+5 דקות</button>
+      <button onclick="adjust(2, -600)">-10 דקות</button>
+    </div>
+
+    <div class="edit">
+      <input id="set2" type="text" placeholder="HH:MM:SS / MM:SS / HH" inputmode="numeric" />
+      <button onclick="setTime(2)">Set</button>
+    </div>
+  </div>
 </div>
 
 <script>
-async function api(url, options={}) {
-  const res = await fetch(url, {
-    headers: {"Content-Type":"application/json"},
-    ...options
-  });
-  return res.json();
-}
+  // ✅ דגל: אם משתמש מקליד באחד ה-inputים — לא נדרוס UI בזמן poll
+  let isEditing = false;
 
-function renderStatus(el, data, title) {
-  if (!data || !data.msg) {
-    document.getElementById(el).innerHTML = "";
-    return;
+  const set1 = document.getElementById('set1');
+  const set2 = document.getElementById('set2');
+
+  [set1, set2].forEach(inp => {
+    inp.addEventListener('focus', () => { isEditing = true; });
+    inp.addEventListener('blur', () => { isEditing = false; });
+    // ✅ Enter = Set (בלי רענון)
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const id = (inp.id === 'set1') ? 1 : 2;
+        setTime(id);
+      }
+    });
+  });
+
+  async function post(url, body=null){
+    await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: body ? JSON.stringify(body) : null
+    });
   }
-  const cls = data.ok ? "ok" : "err";
-  document.getElementById(el).innerHTML = `
-    <div class="${cls}">
-      <b>${title}</b><br>
-      ${data.msg}<br>
-      ${data.calendar_id ? "calendar_id: "+data.calendar_id+"<br>" : ""}
-      ${data.event_id ? "event_id: "+data.event_id+"<br>" : ""}
-      <span class="small">${data.at || ""}</span>
-    </div>
-  `;
-}
 
-function renderTimers(timers) {
-  const el = document.getElementById("timers");
-  el.innerHTML = "";
+  function parseTimeToSeconds(s){
+    s = (s || '').trim();
+    if (!s) return null;
 
-  timers.forEach((t, idx) => {
-    const i = idx + 1;
-    el.innerHTML += `
-      <div class="card">
-        <h3>טיימר ${i}</h3>
-        <div class="timer">${t}</div>
+    // HH
+    if (/^\d+$/.test(s)) {
+      const h = parseInt(s,10);
+      return h * 3600;
+    }
 
-        <button onclick="timer(${i},'start')">▶ Start</button>
-        <button onclick="timer(${i},'stop')">⏸ Stop</button><br>
-        <button onclick="timer(${i},'reset')">🔄 Reset</button><br>
+    // MM:SS
+    if (/^\d{1,3}:\d{2}$/.test(s)) {
+      const [m, sec] = s.split(':').map(x=>parseInt(x,10));
+      return m*60 + sec;
+    }
 
-        <button onclick="adjust(${i},300)">+5 דקות</button>
-        <button onclick="adjust(${i},-600)">-10 דקות</button><br>
+    // HH:MM:SS
+    if (/^\d{1,3}:\d{2}:\d{2}$/.test(s)) {
+      const [h, m, sec] = s.split(':').map(x=>parseInt(x,10));
+      return h*3600 + m*60 + sec;
+    }
 
-        <input id="set${i}" placeholder="HH:MM:SS / MM:SS / HH">
-        <button onclick="setTime(${i})">Set</button>
-      </div>
-    `;
+    return null;
+  }
+
+  async function adjust(i, delta){
+    const res = await fetch(`/api/timer/${i}/adjust`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({delta})
+    });
+    // לא חייבים לעשות כלום פה; הסטטוס ימשוך בזמן polling
+  }
+
+  async function setTime(i){
+    const inp = document.getElementById(`set${i}`);
+    const sec = parseTimeToSeconds(inp.value);
+    if (sec === null) {
+      alert('פורמט לא תקין. דוגמא: 01:30 או 00:10:00 או 2');
+      return;
+    }
+    const res = await fetch(`/api/timer/${i}/set`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({seconds: sec})
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(()=> ({}));
+      alert(j.error || 'שגיאה בעדכון');
+    } else {
+      inp.value = '';
+    }
+  }
+
+  function paintStatus(boxId, ok, title, msg, meta){
+    const box = document.getElementById(boxId);
+    box.classList.remove('good','bad');
+    box.classList.add(ok ? 'good' : 'bad');
+    box.querySelector('.title').textContent = title;
+    box.querySelector('.msg').textContent = msg || '—';
+    box.querySelector('.meta').textContent = meta || '';
+  }
+
+  async function refresh(){
+    const j = await fetch('/api/status').then(r=>r.json());
+
+    document.getElementById('nowLine').textContent =
+      `(${j.mode.toUpperCase()}) ${j.now_str}`;
+
+    // ✅ סטטוסים
+    const s = j.sheet || {};
+    const c = j.calendar || {};
+
+    paintStatus(
+      'sheetBox',
+      !!s.ok,
+      'Google Sheet',
+      (s.msg || (s.ok ? 'OK' : 'שגיאה')),
+      (s.at ? `${s.at} ${s.mode ? '— ('+s.mode+')' : ''}` : '')
+    );
+
+    paintStatus(
+      'calBox',
+      !!c.ok,
+      'Google Calendar',
+      (c.msg || (c.ok ? 'OK' : 'שגיאה')),
+      (c.at ? `${c.at} ${c.calendar_id ? '— ' + c.calendar_id : ''}` : '')
+    );
+
+    // ✅ אל תדרוס את ה־input בזמן הקלדה
+    if (!isEditing) {
+      document.getElementById('t1').textContent = j.timers?.[0] || '00:00:00';
+      document.getElementById('t2').textContent = j.timers?.[1] || '00:00:00';
+    }
+  }
+
+  document.getElementById('btnLogSheet').addEventListener('click', async ()=>{
+    const r = await fetch('/api/log-now', {method:'POST'});
+    // מיד אחרי פעולה ידנית נמשוך סטטוס ונראה הודעה (כמו ביומן)
+    await refresh();
   });
-}
 
-async function refresh() {
-  const s = await api("/api/status");
-
-  document.getElementById("now").innerText =
-    s.now_str + (s.simulation ? " (SIM)" : " (REAL)");
-
-  renderStatus("sheetStatus", s.sheet, "Google Sheet");
-  renderStatus("calendarStatus", s.calendar, "Google Calendar");
-
-  renderTimers(s.timers);
-}
-
-async function timer(i, action) {
-  await api(`/api/timer/${i}/${action}`, {method:"POST"});
-  refresh();
-}
-
-async function adjust(i, delta) {
-  await api(`/api/timer/${i}/adjust`, {
-    method:"POST",
-    body:JSON.stringify({delta})
+  document.getElementById('btnCalUpdate').addEventListener('click', async ()=>{
+    const r = await fetch('/api/calendar/update-now', {method:'POST'});
+    await refresh();
   });
+
+  // poll
   refresh();
-}
-
-async function setTime(i) {
-  const v = document.getElementById("set"+i).value.trim();
-  if (!v) return;
-  const p = v.split(":").map(Number);
-  let sec = 0;
-  if (p.length===1) sec=p[0]*3600;
-  if (p.length===2) sec=p[0]*60+p[1];
-  if (p.length===3) sec=p[0]*3600+p[1]*60+p[2];
-
-  await api(`/api/timer/${i}/set`, {
-    method:"POST",
-    body:JSON.stringify({seconds:sec})
-  });
-  refresh();
-}
-
-async function logSheet() {
-  await api("/api/log-now", {method:"POST"});
-  refresh();
-}
-
-async function logCalendar() {
-  await api("/api/calendar/update-now", {method:"POST"});
-  refresh();
-}
-
-setInterval(refresh, 1000);
-refresh();
+  setInterval(refresh, 1000);
 </script>
-
 </body>
 </html>
