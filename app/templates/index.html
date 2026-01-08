@@ -1,269 +1,151 @@
 <!doctype html>
 <html lang="he" dir="rtl">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Work Timers</title>
-  <style>
-    body { font-family: Arial, sans-serif; background:#f5f6f7; margin:0; padding:20px; }
-    .wrap { max-width: 520px; margin: 0 auto; }
-    h1 { text-align:center; margin:10px 0 6px; }
-    .now { text-align:center; color:#444; margin-bottom:14px; }
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Work Timers</title>
 
-    .status {
-      border-radius: 12px;
-      padding: 12px 14px;
-      margin: 10px 0;
-      border: 1px solid #ddd;
-      background: #fff;
-    }
-    .status.bad { background:#ffe7e7; border-color:#ffb4b4; }
-    .status.good { background:#e9fff0; border-color:#a8f0c0; }
-    .status .title { font-weight:700; margin-bottom:6px; }
-    .status .msg { font-size:16px; }
-    .status .meta { margin-top:6px; color:#666; font-size:13px; }
-
-    .card {
-      background:#fff; border:1px solid #ddd; border-radius:16px;
-      padding:18px; margin:14px 0;
-      box-shadow:0 1px 3px rgba(0,0,0,.05);
-      text-align:center;
-    }
-    .timer-title { font-size:28px; font-weight:700; margin:6px 0 10px; }
-    .timer-time { font-size:60px; font-weight:800; margin:10px 0 14px; letter-spacing:1px; }
-    .row { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
-    button {
-      padding: 12px 16px; border-radius:10px; border:1px solid #bbb;
-      background:#f7f7f7; cursor:pointer; font-size:18px;
-      min-width: 120px;
-    }
-    button.primary { background:#2e7d32; color:#fff; border-color:#2e7d32; }
-    button.danger { background:#1565c0; color:#fff; border-color:#1565c0; }
-    button.reset { background:#6d4c41; color:#fff; border-color:#6d4c41; }
-
-    .edit { margin-top:12px; display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap; }
-    input[type="text"]{
-      font-size:18px; padding:12px 14px; border-radius:10px; border:1px solid #bbb;
-      min-width: 260px;
-      text-align:center;
-    }
-    .small { font-size:14px; color:#666; margin-top:6px; }
-    .top-actions { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
-  </style>
+<style>
+body{font-family:Arial;background:#f5f6f7;margin:0;padding:20px}
+.wrap{max-width:520px;margin:auto}
+h1{text-align:center}
+.card{background:#fff;border-radius:16px;padding:18px;margin:14px 0;border:1px solid #ddd;text-align:center}
+.timer-time{font-size:58px;font-weight:800}
+.row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+button{padding:12px 16px;font-size:18px;border-radius:10px;border:1px solid #bbb}
+.primary{background:#2e7d32;color:#fff}
+.danger{background:#1565c0;color:#fff}
+.reset{background:#6d4c41;color:#fff}
+input.timebox{
+  font-size:22px;
+  text-align:center;
+  width:160px;
+  padding:10px;
+  border-radius:10px;
+  border:1px solid #bbb;
+  letter-spacing:2px;
+}
+.status{border-radius:12px;padding:12px;margin:10px 0}
+.good{background:#e9fff0}
+.bad{background:#ffe7e7}
+</style>
 </head>
+
 <body>
 <div class="wrap">
-  <h1>Work Timers ⏱️</h1>
-  <div class="now" id="nowLine">(טוען...)</div>
 
-  <!-- ✅ סטטוס Google Sheet כמו ביומן -->
-  <div id="sheetBox" class="status">
-    <div class="title">Google Sheet</div>
-    <div class="msg" id="sheetMsg">—</div>
-    <div class="meta" id="sheetMeta"></div>
+<h1>Work Timers ⏱️</h1>
+<div id="nowLine" style="text-align:center;margin-bottom:12px"></div>
+
+<div id="sheetBox" class="status">
+  <b>Google Sheet</b>
+  <div id="sheetMsg"></div>
+</div>
+
+<div id="calBox" class="status">
+  <b>Google Calendar</b>
+  <div id="calMsg"></div>
+</div>
+
+<button onclick="post('/api/log-now')">עדכון ידני ל-Sheet</button>
+<button onclick="post('/api/calendar/update-now')">עדכון יומן</button>
+
+<!-- TIMER 1 -->
+<div class="card">
+  <h2>טיימר 1</h2>
+  <div class="timer-time" id="t1">00:00:00</div>
+
+  <div class="row">
+    <button class="danger" onclick="post('/api/timer/1/stop')">Stop</button>
+    <button class="primary" onclick="post('/api/timer/1/start')">Start</button>
   </div>
 
-  <!-- ✅ סטטוס Google Calendar -->
-  <div id="calBox" class="status">
-    <div class="title">Google Calendar</div>
-    <div class="msg" id="calMsg">—</div>
-    <div class="meta" id="calMeta"></div>
+  <div class="row">
+    <button class="reset" onclick="post('/api/timer/1/reset')">Reset</button>
   </div>
 
-  <div class="top-actions">
-    <button id="btnLogSheet">עדכן Sheet עכשיו</button>
-    <button id="btnCalUpdate">עדכן יומן עכשיו</button>
+  <div class="row">
+    <button onclick="adjust(1,300)">+5 דק</button>
+    <button onclick="adjust(1,-600)">-10 דק</button>
   </div>
 
-  <!-- Timer 1 -->
-  <div class="card">
-    <div class="timer-title">טיימר 1</div>
-    <div class="timer-time" id="t1">00:00:00</div>
-
-    <div class="row">
-      <button class="danger" onclick="post('/api/timer/1/stop')">Stop ⏸️</button>
-      <button class="primary" onclick="post('/api/timer/1/start')">Start ▶️</button>
-    </div>
-    <div class="row" style="margin-top:10px;">
-      <button class="reset" onclick="post('/api/timer/1/reset')">Reset 🔄</button>
-    </div>
-
-    <div class="row" style="margin-top:10px;">
-      <button onclick="adjust(1, +300)">+5 דקות</button>
-      <button onclick="adjust(1, -600)">-10 דקות</button>
-    </div>
-
-    <div class="edit">
-      <!-- ✅ חשוב: לא form, כדי לא "יקפוץ" -->
-      <input id="set1" type="text" placeholder="HH:MM:SS / MM:SS / HH" inputmode="numeric" />
-      <button onclick="setTime(1)">Set</button>
-    </div>
-    <div class="small">טיפ: בזמן שאתה מקליד – המסך לא ידרוס את ה־input.</div>
-  </div>
-
-  <!-- Timer 2 -->
-  <div class="card">
-    <div class="timer-title">טיימר 2</div>
-    <div class="timer-time" id="t2">00:00:00</div>
-
-    <div class="row">
-      <button class="danger" onclick="post('/api/timer/2/stop')">Stop ⏸️</button>
-      <button class="primary" onclick="post('/api/timer/2/start')">Start ▶️</button>
-    </div>
-    <div class="row" style="margin-top:10px;">
-      <button class="reset" onclick="post('/api/timer/2/reset')">Reset 🔄</button>
-    </div>
-
-    <div class="row" style="margin-top:10px;">
-      <button onclick="adjust(2, +300)">+5 דקות</button>
-      <button onclick="adjust(2, -600)">-10 דקות</button>
-    </div>
-
-    <div class="edit">
-      <input id="set2" type="text" placeholder="HH:MM:SS / MM:SS / HH" inputmode="numeric" />
-      <button onclick="setTime(2)">Set</button>
-    </div>
+  <div class="row">
+    <input id="set1" class="timebox" value="00:00:00"
+           oninput="maskTime(this)">
+    <button onclick="setMaskedTime(1)">Set</button>
   </div>
 </div>
 
+<!-- TIMER 2 -->
+<div class="card">
+  <h2>טיימר 2</h2>
+  <div class="timer-time" id="t2">00:00:00</div>
+
+  <div class="row">
+    <button class="danger" onclick="post('/api/timer/2/stop')">Stop</button>
+    <button class="primary" onclick="post('/api/timer/2/start')">Start</button>
+  </div>
+
+  <div class="row">
+    <button class="reset" onclick="post('/api/timer/2/reset')">Reset</button>
+  </div>
+
+  <div class="row">
+    <button onclick="adjust(2,300)">+5 דק</button>
+    <button onclick="adjust(2,-600)">-10 דק</button>
+  </div>
+
+  <div class="row">
+    <input id="set2" class="timebox" value="00:00:00"
+           oninput="maskTime(this)">
+    <button onclick="setMaskedTime(2)">Set</button>
+  </div>
+</div>
+
+</div>
+
 <script>
-  // ✅ דגל: אם משתמש מקליד באחד ה-inputים — לא נדרוס UI בזמן poll
-  let isEditing = false;
+let editing=false;
 
-  const set1 = document.getElementById('set1');
-  const set2 = document.getElementById('set2');
+async function post(url,body){
+  await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):null});
+}
 
-  [set1, set2].forEach(inp => {
-    inp.addEventListener('focus', () => { isEditing = true; });
-    inp.addEventListener('blur', () => { isEditing = false; });
-    // ✅ Enter = Set (בלי רענון)
-    inp.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        const id = (inp.id === 'set1') ? 1 : 2;
-        setTime(id);
-      }
-    });
-  });
+function adjust(i,delta){
+  post(`/api/timer/${i}/adjust`,{delta});
+}
 
-  async function post(url, body=null){
-    await fetch(url, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: body ? JSON.stringify(body) : null
-    });
-  }
+/* ====== TIME MASK ====== */
+function maskTime(el){
+  let v = el.value.replace(/\D/g,'').slice(0,6);
+  while(v.length<6) v='0'+v;
+  el.value = v.slice(0,2)+':'+v.slice(2,4)+':'+v.slice(4,6);
+}
 
-  function parseTimeToSeconds(s){
-    s = (s || '').trim();
-    if (!s) return null;
+function setMaskedTime(i){
+  const el=document.getElementById('set'+i);
+  const [h,m,s]=el.value.split(':').map(Number);
+  const sec=h*3600+m*60+s;
+  post(`/api/timer/${i}/set`,{seconds:sec});
+}
 
-    // HH
-    if (/^\d+$/.test(s)) {
-      const h = parseInt(s,10);
-      return h * 3600;
-    }
+/* ====== STATUS ====== */
+async function refresh(){
+  const j=await fetch('/api/status').then(r=>r.json());
+  document.getElementById('nowLine').innerText=j.now_str;
 
-    // MM:SS
-    if (/^\d{1,3}:\d{2}$/.test(s)) {
-      const [m, sec] = s.split(':').map(x=>parseInt(x,10));
-      return m*60 + sec;
-    }
+  document.getElementById('t1').innerText=j.timers[0];
+  document.getElementById('t2').innerText=j.timers[1];
 
-    // HH:MM:SS
-    if (/^\d{1,3}:\d{2}:\d{2}$/.test(s)) {
-      const [h, m, sec] = s.split(':').map(x=>parseInt(x,10));
-      return h*3600 + m*60 + sec;
-    }
+  document.getElementById('sheetBox').className='status '+(j.sheet.ok?'good':'bad');
+  document.getElementById('sheetMsg').innerText=j.sheet.msg||'—';
 
-    return null;
-  }
+  document.getElementById('calBox').className='status '+(j.calendar.ok?'good':'bad');
+  document.getElementById('calMsg').innerText=j.calendar.msg||'—';
+}
 
-  async function adjust(i, delta){
-    const res = await fetch(`/api/timer/${i}/adjust`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({delta})
-    });
-    // לא חייבים לעשות כלום פה; הסטטוס ימשוך בזמן polling
-  }
-
-  async function setTime(i){
-    const inp = document.getElementById(`set${i}`);
-    const sec = parseTimeToSeconds(inp.value);
-    if (sec === null) {
-      alert('פורמט לא תקין. דוגמא: 01:30 או 00:10:00 או 2');
-      return;
-    }
-    const res = await fetch(`/api/timer/${i}/set`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({seconds: sec})
-    });
-    if (!res.ok) {
-      const j = await res.json().catch(()=> ({}));
-      alert(j.error || 'שגיאה בעדכון');
-    } else {
-      inp.value = '';
-    }
-  }
-
-  function paintStatus(boxId, ok, title, msg, meta){
-    const box = document.getElementById(boxId);
-    box.classList.remove('good','bad');
-    box.classList.add(ok ? 'good' : 'bad');
-    box.querySelector('.title').textContent = title;
-    box.querySelector('.msg').textContent = msg || '—';
-    box.querySelector('.meta').textContent = meta || '';
-  }
-
-  async function refresh(){
-    const j = await fetch('/api/status').then(r=>r.json());
-
-    document.getElementById('nowLine').textContent =
-      `(${j.mode.toUpperCase()}) ${j.now_str}`;
-
-    // ✅ סטטוסים
-    const s = j.sheet || {};
-    const c = j.calendar || {};
-
-    paintStatus(
-      'sheetBox',
-      !!s.ok,
-      'Google Sheet',
-      (s.msg || (s.ok ? 'OK' : 'שגיאה')),
-      (s.at ? `${s.at} ${s.mode ? '— ('+s.mode+')' : ''}` : '')
-    );
-
-    paintStatus(
-      'calBox',
-      !!c.ok,
-      'Google Calendar',
-      (c.msg || (c.ok ? 'OK' : 'שגיאה')),
-      (c.at ? `${c.at} ${c.calendar_id ? '— ' + c.calendar_id : ''}` : '')
-    );
-
-    // ✅ אל תדרוס את ה־input בזמן הקלדה
-    if (!isEditing) {
-      document.getElementById('t1').textContent = j.timers?.[0] || '00:00:00';
-      document.getElementById('t2').textContent = j.timers?.[1] || '00:00:00';
-    }
-  }
-
-  document.getElementById('btnLogSheet').addEventListener('click', async ()=>{
-    const r = await fetch('/api/log-now', {method:'POST'});
-    // מיד אחרי פעולה ידנית נמשוך סטטוס ונראה הודעה (כמו ביומן)
-    await refresh();
-  });
-
-  document.getElementById('btnCalUpdate').addEventListener('click', async ()=>{
-    const r = await fetch('/api/calendar/update-now', {method:'POST'});
-    await refresh();
-  });
-
-  // poll
-  refresh();
-  setInterval(refresh, 1000);
+refresh();
+setInterval(refresh,1000);
 </script>
 </body>
 </html>
