@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, date, time as dtime
 import pytz
 from flask import Flask, jsonify, render_template, request
 
-# ✅ חשוב: templates/ יושב ליד app.py
+# ✅ templates/ יושב בתוך app/templates ליד app.py
 app = Flask(__name__, template_folder="templates")
 
 # =========================
@@ -24,12 +24,13 @@ def tz_now_real() -> datetime:
 # =========================
 TIMER_COUNT = 2
 
-RESET_HOUR = 5
-FIRST_LOG_HOUR = 8
-
+RESET_HOUR = 5           # daily reset at 05:00
+FIRST_LOG_HOUR = 8       # auto log window start (08..23) + 00:00 treated as "24" => previous day 23
 SPREADSHEET_NAME = "Time Tracking"
 WORKSHEET_NAME = "Log"
 
+# True  -> allow Set/+5/-10 while running
+# False -> block edits while running
 ALLOW_EDIT_WHILE_RUNNING = True
 
 # Calendar
@@ -54,10 +55,10 @@ def init_db():
     CREATE TABLE IF NOT EXISTS timers (
         mode TEXT NOT NULL,                 -- 'real' or 'sim'
         timer_id INTEGER NOT NULL,
-        running INTEGER NOT NULL DEFAULT 0,
-        elapsed INTEGER NOT NULL DEFAULT 0,
-        start_epoch REAL,
-        start_sim_iso TEXT,
+        running INTEGER NOT NULL DEFAULT 0, -- 0/1
+        elapsed INTEGER NOT NULL DEFAULT 0, -- base seconds (when not running)
+        start_epoch REAL,                   -- unix epoch when started (real)
+        start_sim_iso TEXT,                 -- ISO local datetime when started (sim)
         PRIMARY KEY (mode, timer_id)
     )
     """)
@@ -69,6 +70,7 @@ def init_db():
     )
     """)
 
+    # Ensure timers exist
     for mode in ("real", "sim"):
         for i in range(1, TIMER_COUNT + 1):
             cur.execute("""
@@ -77,36 +79,37 @@ def init_db():
             """, (mode, i))
 
     defaults = {
+        # sim clock
         "sim_enabled": "0",
         "sim_now_iso": "",
 
-        # Sheet last result (for UI)
+        # last sheet log result (for UI)
         "last_sheet_mode": "",
         "last_sheet_ok": "0",
         "last_sheet_msg": "",
         "last_sheet_at_iso": "",
 
-        # Calendar last result (for UI)
+        # last calendar update result (for UI)
         "last_cal_ok": "0",
         "last_cal_msg": "",
         "last_cal_at_iso": "",
         "last_cal_calendar_id": "",
         "last_cal_event_id": "",
 
-        # Auto guards
-        "last_auto_logged_key_real": "",
+        # AUTO sheet log guards (per mode)
+        "last_auto_logged_key_real": "",  # e.g. "2026-01-06|23"
         "last_auto_logged_key_sim": "",
 
-        # resets
-        "last_reset_date_real": "",
+        # resets (per mode)
+        "last_reset_date_real": "",       # YYYY-MM-DD
         "last_reset_date_sim": "",
 
-        # start-time (row 4) per mode
+        # start-time written (per mode) - day key YYYY-MM-DD (target_day)
         "first_start_logged_date_real": "",
         "first_start_logged_date_sim": "",
 
-        # daily calendar guard
-        "daily_calendar_updated_date": "",
+        # daily calendar guard (once per day)
+        "daily_calendar_updated_date": "",  # YYYY-MM-DD
     }
 
     for k, v in defaults.items():
@@ -152,6 +155,7 @@ def get_sim_now():
 
 def set_sim_now(dt: datetime):
     dt = dt.astimezone(TZ)
+    # store without tzinfo (wall-clock), seconds precision
     set_meta("sim_now_iso", dt.replace(tzinfo=None).isoformat(timespec="seconds"))
 
 def now_for_mode(mode: str):
@@ -169,8 +173,8 @@ def ensure_daily_reset_for_mode(mode: str, clock_dt: datetime):
     if clock_dt.hour < RESET_HOUR:
         return
 
-    key_last = f"last_reset_date_{mode}"
-    key_start = f"first_start_logged_date_{mode}"
+    key_last = f"last_reset_date_{mode}"            # YYYY-MM-DD
+    key_start = f"first_start_logged_date_{mode}"   # YYYY-MM-DD
 
     today = clock_dt.date().isoformat()
     if get_meta(key_last) == today:
@@ -187,7 +191,7 @@ def ensure_daily_reset_for_mode(mode: str, clock_dt: datetime):
     conn.close()
 
     set_meta(key_last, today)
-    set_meta(key_start, "")
+    set_meta(key_start, "")  # allow start-time again
 
 # =========================
 # TIMER CALCULATION
@@ -224,6 +228,7 @@ def timer_total_seconds(mode: str, timer_id: int, clock_dt: datetime) -> int:
         now_epoch = tz_now_real().timestamp()
         return elapsed + int(max(0, now_epoch - float(t["start_epoch"])))
 
+    # sim
     if t["start_sim_iso"] is None or clock_dt is None:
         return elapsed
 
@@ -234,6 +239,10 @@ def timer_total_seconds(mode: str, timer_id: int, clock_dt: datetime) -> int:
     return elapsed + diff
 
 def set_timer_seconds(mode: str, timer_id: int, new_seconds: int, clock_dt: datetime):
+    """
+    Set timer to EXACT new_seconds.
+    Works even while running (if allowed): keeps running state and resets "start" to now.
+    """
     t = timer_row(mode, timer_id)
     if t is None:
         return False, "timer missing"
@@ -319,12 +328,18 @@ def gs_connect():
     return WS
 
 def target_hour_and_date(dt: datetime):
-    # 00:00–07:59 -> previous day @ 23
+    """
+    ✅ Rules:
+    - 00:00–07:59 -> previous day @ 23
+    - else -> dt.hour
+    """
     if dt.hour < FIRST_LOG_HOUR:
         return 23, (dt.date() - timedelta(days=1))
     return dt.hour, dt.date()
 
 def sheet_row_for_hour(hour: int) -> int:
+    # row 7 = 08:00, row 22 = 23:00
+    # clamp
     if hour < 8:
         hour = 8
     if hour > 23:
@@ -332,6 +347,10 @@ def sheet_row_for_hour(hour: int) -> int:
     return 7 + (hour - 8)
 
 def write_two_timers_into_sheet(ws, row: int, col: int, mode: str, clock_dt: datetime):
+    """
+    writes 2 timers:
+    Timer1 in col, Timer2 in col+1
+    """
     t1 = fmt(timer_total_seconds(mode, 1, clock_dt))
     t2 = fmt(timer_total_seconds(mode, 2, clock_dt))
     ws.update_cell(row, col, t1)
@@ -340,12 +359,17 @@ def write_two_timers_into_sheet(ws, row: int, col: int, mode: str, clock_dt: dat
 def log_to_sheet(mode: str, clock_dt: datetime, force=False):
     ws = gs_connect()
     if ws is None:
-        return False, "Google creds missing"
+        return False, "Google creds missing (Sheets)"
 
     if clock_dt is None:
         return False, "clock missing"
 
     hour, day = target_hour_and_date(clock_dt)
+
+    # ✅ אם איכשהו מתקבל hour > 24 → נצמד ל-23
+    if hour > 24:
+        hour = 23
+    # datetime לא נותן 24, אבל 00:00 כבר מטופל דרך target_hour_and_date -> 23 של אתמול
     if hour > 23:
         hour = 23
 
@@ -353,8 +377,10 @@ def log_to_sheet(mode: str, clock_dt: datetime, force=False):
     key = f"{day_str}|{hour}"
     key_meta = f"last_auto_logged_key_{mode}"
 
-    if not force and get_meta(key_meta) == key:
-        return True, "already logged"
+    # prevent duplicates on auto unless forced
+    if not force:
+        if get_meta(key_meta) == key:
+            return True, "already logged"
 
     date_str = day.strftime("%d/%m/%Y")
     headers = ws.row_values(3)
@@ -365,10 +391,16 @@ def log_to_sheet(mode: str, clock_dt: datetime, force=False):
     row = sheet_row_for_hour(hour)
 
     write_two_timers_into_sheet(ws, row, col, mode, clock_dt)
+
     set_meta(key_meta, key)
-    return True, f"logged (hour={hour} day={day_str})"
+    return True, f"logged (mode={mode} hour={hour} day={day_str})"
 
 def log_start_time_if_needed(mode: str, clock_dt: datetime):
+    """
+    ✅ Write start time (HH:MM) to row 4 for the DATE of clock_dt,
+    first Start after 05:00.
+    One per day per mode.
+    """
     if clock_dt is None:
         return
     if clock_dt.hour < RESET_HOUR:
@@ -394,17 +426,54 @@ def log_start_time_if_needed(mode: str, clock_dt: datetime):
     ws.update_cell(4, col, clock_dt.strftime("%H:%M"))
     set_meta(key, day_key)
 
+# ✅ Calendar summary should use MAX(t1,t2) from sheet row 22
+def _parse_hms_to_seconds(s: str) -> int:
+    if not s:
+        return 0
+    s = str(s).strip()
+    if not s:
+        return 0
+    parts = s.split(":")
+    try:
+        if len(parts) == 3:
+            h, m, sec = [int(x) for x in parts]
+            return max(0, h*3600 + m*60 + sec)
+        if len(parts) == 2:
+            m, sec = [int(x) for x in parts]
+            return max(0, m*60 + sec)
+        if len(parts) == 1:
+            h = int(parts[0])
+            return max(0, h*3600)
+    except:
+        return 0
+    return 0
+
+def _seconds_to_hms(sec: int) -> str:
+    sec = max(0, int(sec))
+    h = sec // 3600
+    m = (sec % 3600) // 60
+    s = sec % 60
+    return f"{h:02}:{m:02}:{s:02}"
+
 def get_activity_time_for_day(ws, day: date):
-    # ✅ לוקח שורה 22 (23:00–24:00) בעמודה של התאריך
+    """
+    ✅ לוקחים את שורת 23:00–24:00 (row 22)
+    ✅ אבל לוקחים את הגדול מבין col ו-col+1 (טיימר 1/2)
+    """
     date_str = day.strftime("%d/%m/%Y")
     headers = ws.row_values(3)
     if date_str not in headers:
         return None
 
     col = headers.index(date_str) + 1
-    row = 22
-    value = ws.cell(row, col).value
-    return value or "00:00:00"
+    row = 22  # 23:00–24:00
+
+    v1 = ws.cell(row, col).value or ""
+    v2 = ws.cell(row, col + 1).value or ""
+
+    s1 = _parse_hms_to_seconds(v1)
+    s2 = _parse_hms_to_seconds(v2)
+    return _seconds_to_hms(max(s1, s2))
 
 # =========================
 # GOOGLE CALENDAR
@@ -478,12 +547,14 @@ def update_calendar_daily_summary(day: date, activity_time: str):
             return False, "", "", msg
 
         ordered = sorted(cals, key=lambda x: (not x.get("primary", False)))
+        found_any = False
         for cal in ordered:
             cid = cal["id"]
             found, used_calendar_id, ev_id, ev, fmsg = find_summary_event(cid, day, CALENDAR_SUMMARY)
             if found:
+                found_any = True
                 break
-        else:
+        if not found_any:
             return False, "", "", "event not found"
     else:
         found, used_calendar_id, ev_id, ev, fmsg = find_summary_event(target_calendar_id, day, CALENDAR_SUMMARY)
@@ -523,22 +594,44 @@ def update_calendar_daily_summary(day: date, activity_time: str):
 # AUTO POLICIES
 # =========================
 def should_auto_log(dt: datetime) -> bool:
+    """
+    Auto log כל שעה עגולה:
+    - 08:00..23:00
+    - וגם 00:00 (נחשב כ-24:00 לוגית) -> ייכתב ל-23 של היום הקודם
+    """
     if dt is None:
         return False
     if dt.minute != 0:
         return False
+    # כדי לא לירות מלא פעמים באותה דקה אם /api/status נקרא הרבה
     if dt.second > 5:
         return False
     return (dt.hour == 0) or (FIRST_LOG_HOUR <= dt.hour <= 23)
 
 def should_update_daily_summary(now_dt: datetime) -> bool:
+    """
+    True פעם אחת ביום ב-00:30 (לפי שעון ישראל)
+    """
     if now_dt.hour == 0 and now_dt.minute == 30:
-        last = get_meta("daily_calendar_updated_date")
+        last = get_meta("daily_calendar_updated_date")  # YYYY-MM-DD
         today = now_dt.date().isoformat()
         if last != today:
             set_meta("daily_calendar_updated_date", today)
             return True
     return False
+
+def _save_sheet_status(ok: bool, msg: str, mode: str):
+    set_meta("last_sheet_mode", mode)
+    set_meta("last_sheet_ok", "1" if ok else "0")
+    set_meta("last_sheet_msg", msg)
+    set_meta("last_sheet_at_iso", tz_now_real().strftime("%d/%m/%Y %H:%M:%S"))
+
+def _save_cal_status(ok: bool, msg: str, cal_id: str = "", ev_id: str = ""):
+    set_meta("last_cal_ok", "1" if ok else "0")
+    set_meta("last_cal_msg", msg)
+    set_meta("last_cal_at_iso", tz_now_real().strftime("%d/%m/%Y %H:%M:%S"))
+    set_meta("last_cal_calendar_id", cal_id or "")
+    set_meta("last_cal_event_id", ev_id or "")
 
 # =========================
 # UI
@@ -559,73 +652,29 @@ def status():
         if s is not None:
             set_sim_now(s + timedelta(seconds=1))
 
-    # resets (both modes)
+    # ensure resets (both modes)
     ensure_daily_reset_for_mode("real", tz_now_real())
     ensure_daily_reset_for_mode("sim", get_sim_now())
 
-    # ✅ תמיד נחזיר גם את ה-last_* כדי שה-UI יראה "למה נכשל"
-    sheet_last = {
-        "mode": get_meta("last_sheet_mode"),
-        "ok": get_meta("last_sheet_ok") == "1",
-        "msg": get_meta("last_sheet_msg"),
-        "at": get_meta("last_sheet_at_iso"),
-    }
-    cal_last = {
-        "ok": get_meta("last_cal_ok") == "1",
-        "msg": get_meta("last_cal_msg"),
-        "at": get_meta("last_cal_at_iso"),
-        "calendar_id": get_meta("last_cal_calendar_id"),
-        "event_id": get_meta("last_cal_event_id"),
-    }
-
-    # ===== AUTO SHEET LOG (real & sim, independent) =====
-    # נעדכן sheet_last אם היה ניסיון עכשיו
+    # auto log for real & sim (independent)
     try:
         real_clock = tz_now_real()
         if should_auto_log(real_clock):
             ok, msg = log_to_sheet("real", real_clock, force=False)
-            set_meta("last_sheet_mode", "real")
-            set_meta("last_sheet_ok", "1" if ok else "0")
-            set_meta("last_sheet_msg", msg)
-            set_meta("last_sheet_at_iso", real_clock.strftime("%d/%m/%Y %H:%M:%S"))
-            sheet_last = {
-                "mode": "real",
-                "ok": ok,
-                "msg": msg,
-                "at": get_meta("last_sheet_at_iso"),
-            }
+            _save_sheet_status(ok, msg, "real")
     except Exception as e:
-        msg = f"sheet auto error: {type(e).__name__}: {e}"
-        set_meta("last_sheet_mode", "real")
-        set_meta("last_sheet_ok", "0")
-        set_meta("last_sheet_msg", msg)
-        set_meta("last_sheet_at_iso", tz_now_real().strftime("%d/%m/%Y %H:%M:%S"))
-        sheet_last = {"mode": "real", "ok": False, "msg": msg, "at": get_meta("last_sheet_at_iso")}
+        _save_sheet_status(False, f"sheet auto error: {type(e).__name__}: {e}", "real")
 
     try:
         if sim_enabled():
             sim_clock = get_sim_now()
             if sim_clock and should_auto_log(sim_clock):
                 ok, msg = log_to_sheet("sim", sim_clock, force=False)
-                set_meta("last_sheet_mode", "sim")
-                set_meta("last_sheet_ok", "1" if ok else "0")
-                set_meta("last_sheet_msg", msg)
-                set_meta("last_sheet_at_iso", sim_clock.strftime("%d/%m/%Y %H:%M:%S"))
-                sheet_last = {
-                    "mode": "sim",
-                    "ok": ok,
-                    "msg": msg,
-                    "at": get_meta("last_sheet_at_iso"),
-                }
+                _save_sheet_status(ok, msg, "sim")
     except Exception as e:
-        msg = f"sheet sim auto error: {type(e).__name__}: {e}"
-        set_meta("last_sheet_mode", "sim")
-        set_meta("last_sheet_ok", "0")
-        set_meta("last_sheet_msg", msg)
-        set_meta("last_sheet_at_iso", tz_now_real().strftime("%d/%m/%Y %H:%M:%S"))
-        sheet_last = {"mode": "sim", "ok": False, "msg": msg, "at": get_meta("last_sheet_at_iso")}
+        _save_sheet_status(False, f"sheet sim auto error: {type(e).__name__}: {e}", "sim")
 
-    # ===== DAILY CALENDAR SUMMARY (00:30) =====
+    # DAILY CALENDAR SUMMARY (00:30) - runs once per day (real)
     try:
         now_real = tz_now_real()
         if should_update_daily_summary(now_real):
@@ -634,60 +683,38 @@ def status():
             if ws is None:
                 raise RuntimeError("no sheet connection for calendar summary")
             activity = get_activity_time_for_day(ws, yesterday)
-            if activity is None:
-                raise RuntimeError("no activity cell found for yesterday")
+            if not activity:
+                raise RuntimeError("no activity found in sheet for yesterday")
 
             ok, cal_id, ev_id, msg = update_calendar_daily_summary(yesterday, activity)
-
-            set_meta("last_cal_ok", "1" if ok else "0")
-            set_meta("last_cal_msg", msg)
-            set_meta("last_cal_at_iso", now_real.strftime("%d/%m/%Y %H:%M:%S"))
-            set_meta("last_cal_calendar_id", cal_id or "")
-            set_meta("last_cal_event_id", ev_id or "")
-
-            cal_last = {
-                "ok": ok,
-                "msg": msg,
-                "at": get_meta("last_cal_at_iso"),
-                "calendar_id": cal_id or "",
-                "event_id": ev_id or "",
-            }
+            _save_cal_status(ok, msg, cal_id, ev_id)
     except Exception as e:
-        msg = f"{type(e).__name__}: {e}"
-        set_meta("last_cal_ok", "0")
-        set_meta("last_cal_msg", msg)
-        set_meta("last_cal_at_iso", tz_now_real().strftime("%d/%m/%Y %H:%M:%S"))
-        cal_last = {
-            "ok": False,
-            "msg": msg,
-            "at": get_meta("last_cal_at_iso"),
-            "calendar_id": get_meta("last_cal_calendar_id"),
-            "event_id": get_meta("last_cal_event_id"),
-        }
+        _save_cal_status(False, f"{type(e).__name__}: {e}")
 
+    # which timers to display? current mode
     mode = current_mode()
     clock = now_for_mode(mode)
-
-    timers = []
-    running = []
-    for i in range(1, TIMER_COUNT + 1):
-        timers.append(fmt(timer_total_seconds(mode, i, clock)))
-        tr = timer_row(mode, i)
-        running.append(bool(tr and int(tr["running"]) == 1))
+    timers = [fmt(timer_total_seconds(mode, i, clock)) for i in range(1, TIMER_COUNT + 1)]
 
     return jsonify({
         "now_str": (clock.strftime("%d/%m/%Y %H:%M:%S") if clock else ""),
         "simulation": sim_enabled(),
         "mode": mode,
         "timers": timers,
-        "running": running,
-        "sheet": sheet_last,
-        "calendar": cal_last,
-        "config": {
-            "calendar_id": CALENDAR_ID,
-            "calendar_summary": CALENDAR_SUMMARY,
-            "sheet_name": SPREADSHEET_NAME,
-            "worksheet_name": WORKSHEET_NAME,
+
+        # Latest persisted messages (UI shows these)
+        "sheet": {
+            "ok": get_meta("last_sheet_ok") == "1",
+            "msg": get_meta("last_sheet_msg"),
+            "at": get_meta("last_sheet_at_iso"),
+            "mode": get_meta("last_sheet_mode"),
+        },
+        "calendar": {
+            "ok": get_meta("last_cal_ok") == "1",
+            "msg": get_meta("last_cal_msg"),
+            "at": get_meta("last_cal_at_iso"),
+            "calendar_id": get_meta("last_cal_calendar_id"),
+            "event_id": get_meta("last_cal_event_id"),
         }
     })
 
@@ -702,7 +729,7 @@ def start_timer(i):
     mode = current_mode()
     clock = now_for_mode(mode)
 
-    # start-time row 4: don't break Start on errors
+    # ✅ שעת התחלה בשורה 4: לא יפיל את ה-Start אם יש בעיה בשיטס
     try:
         log_start_time_if_needed(mode, clock)
     except Exception as e:
@@ -810,7 +837,7 @@ def set_timer(i):
     return jsonify(ok=True, new_time=fmt(new_total))
 
 # =========================
-# API: MANUAL SHEET LOG
+# API: MANUAL SHEET LOG (with UI feedback like calendar)
 # =========================
 @app.route("/api/log-now", methods=["POST"])
 def manual_log():
@@ -822,11 +849,7 @@ def manual_log():
     except Exception as e:
         ok, msg = False, f"{type(e).__name__}: {e}"
 
-    set_meta("last_sheet_mode", mode)
-    set_meta("last_sheet_ok", "1" if ok else "0")
-    set_meta("last_sheet_msg", msg)
-    set_meta("last_sheet_at_iso", tz_now_real().strftime("%d/%m/%Y %H:%M:%S"))
-
+    _save_sheet_status(ok, msg, mode)
     return jsonify(ok=ok, message=msg), (200 if ok else 500)
 
 # =========================
@@ -834,6 +857,10 @@ def manual_log():
 # =========================
 @app.route("/api/sim/start", methods=["POST"])
 def sim_start():
+    """
+    Start simulation clock at provided datetime (Israel time).
+    JSON: {"datetime": "YYYY-MM-DD HH:MM"}
+    """
     data = request.get_json(force=True) or {}
     dt = datetime.strptime(data["datetime"], "%Y-%m-%d %H:%M")
     dt = TZ.localize(dt)
@@ -848,7 +875,7 @@ def sim_stop():
     return jsonify(ok=True)
 
 # =========================
-# API: CALENDAR manual update
+# API: CALENDAR (manual update like 00:30)
 # =========================
 @app.route("/api/calendar/update-now", methods=["POST"])
 def manual_calendar_update():
@@ -858,19 +885,16 @@ def manual_calendar_update():
     try:
         ws = gs_connect()
         if not ws:
+            _save_cal_status(False, "no sheet connection")
             return jsonify(ok=False, error="no sheet connection"), 500
 
         activity = get_activity_time_for_day(ws, yesterday)
-        if activity is None:
-            return jsonify(ok=False, error="no activity cell found"), 404
+        if not activity:
+            _save_cal_status(False, "no activity found")
+            return jsonify(ok=False, error="no activity found"), 404
 
         ok, cal_id, ev_id, msg = update_calendar_daily_summary(yesterday, activity)
-
-        set_meta("last_cal_ok", "1" if ok else "0")
-        set_meta("last_cal_msg", msg)
-        set_meta("last_cal_at_iso", now_real.strftime("%d/%m/%Y %H:%M:%S"))
-        set_meta("last_cal_calendar_id", cal_id or "")
-        set_meta("last_cal_event_id", ev_id or "")
+        _save_cal_status(ok, msg, cal_id, ev_id)
 
         return jsonify(
             ok=ok,
@@ -883,16 +907,18 @@ def manual_calendar_update():
 
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"
-        set_meta("last_cal_ok", "0")
-        set_meta("last_cal_msg", msg)
-        set_meta("last_cal_at_iso", now_real.strftime("%d/%m/%Y %H:%M:%S"))
+        _save_cal_status(False, msg)
         return jsonify(ok=False, error=msg), 500
 
 # =========================
-# 🧪 Endpoint: find calendar + event
+# 🧪 Endpoint בדיקה: מחזיר איזה יומן נמצא + מה קרה בפועל
 # =========================
 @app.route("/api/test/calendar-find", methods=["GET"])
 def test_calendar_find():
+    """
+    /api/test/calendar-find?day=2026-01-06
+    אם אין day -> אתמול
+    """
     try:
         day_s = request.args.get("day", "").strip()
         if day_s:
@@ -939,11 +965,11 @@ def test_calendar_find():
             summary=CALENDAR_SUMMARY,
             calendar_id_config=default_calendar_id,
             found=found,
-            tried=tried[:25]
+            tried=tried[:50]
         )
 
     except Exception as e:
-        return jsonify(ok=False, error=f"{type(e).__name__}: {e}", trace=traceback.format_exc().splitlines()[-5:]), 500
+        return jsonify(ok=False, error=f"{type(e).__name__}: {e}", trace=traceback.format_exc().splitlines()[-7:]), 500
 
 @app.route("/api/test/calendar-list", methods=["GET"])
 def test_calendar_list():
