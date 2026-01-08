@@ -6,146 +6,305 @@
 <title>Work Timers</title>
 
 <style>
-body{font-family:Arial;background:#f5f6f7;margin:0;padding:20px}
-.wrap{max-width:520px;margin:auto}
-h1{text-align:center}
-.card{background:#fff;border-radius:16px;padding:18px;margin:14px 0;border:1px solid #ddd;text-align:center}
-.timer-time{font-size:58px;font-weight:800}
-.row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
-button{padding:12px 16px;font-size:18px;border-radius:10px;border:1px solid #bbb}
-.primary{background:#2e7d32;color:#fff}
-.danger{background:#1565c0;color:#fff}
-.reset{background:#6d4c41;color:#fff}
-input.timebox{
-  font-size:22px;
-  text-align:center;
-  width:160px;
-  padding:10px;
-  border-radius:10px;
-  border:1px solid #bbb;
-  letter-spacing:2px;
-}
-.status{border-radius:12px;padding:12px;margin:10px 0}
-.good{background:#e9fff0}
-.bad{background:#ffe7e7}
+  body{font-family:Arial;background:#f5f6f7;margin:0;padding:20px}
+  .wrap{max-width:560px;margin:auto}
+  h1{text-align:center;margin:10px 0 6px}
+  #nowLine{text-align:center;margin-bottom:12px;font-weight:800}
+
+  .status{border-radius:14px;padding:12px;margin:10px 0;border:1px solid #ddd}
+  .good{background:#e9fff0}
+  .bad{background:#ffe7e7}
+  .small{font-size:14px;opacity:.9}
+
+  .row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;align-items:center}
+  button{padding:12px 16px;font-size:18px;border-radius:10px;border:1px solid #bbb}
+  .primary{background:#2e7d32;color:#fff;border-color:#2e7d32}
+  .danger{background:#1565c0;color:#fff;border-color:#1565c0}
+  .reset{background:#6d4c41;color:#fff;border-color:#6d4c41}
+
+  .card{background:#fff;border-radius:16px;padding:18px;margin:14px 0;border:1px solid #ddd;text-align:center}
+  .timer-time{font-size:58px;font-weight:900;letter-spacing:1px}
+  hr{border:none;border-top:1px solid #eee;margin:12px 0}
+
+  /* sequential inputs */
+  .inputs3{
+    display:flex;gap:8px;justify-content:center;align-items:center;
+    direction:ltr; /* חשוב! כדי שהעריכה תהיה לפי הסדר */
+  }
+  .inputs3 input{
+    width:56px;
+    font-size:22px;
+    padding:10px 8px;
+    text-align:center;
+    border-radius:10px;
+    border:1px solid #bbb;
+  }
+  .colon{font-size:22px;font-weight:800}
+
+  /* spinner */
+  .spinnerRow{
+    display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap;
+    margin-top:10px;
+    direction:ltr;
+  }
+  .spinnerRow select{
+    font-size:18px;
+    padding:10px 10px;
+    border-radius:10px;
+    border:1px solid #bbb;
+  }
+  .spGroup{display:flex;flex-direction:column;align-items:center}
+  .labelMini{font-size:12px;opacity:.75;margin-top:2px}
 </style>
 </head>
 
 <body>
 <div class="wrap">
 
-<h1>Work Timers ⏱️</h1>
-<div id="nowLine" style="text-align:center;margin-bottom:12px"></div>
+  <h1>Work Timers ⏱️</h1>
+  <div id="nowLine">—</div>
 
-<div id="sheetBox" class="status">
-  <b>Google Sheet</b>
-  <div id="sheetMsg"></div>
-</div>
-
-<div id="calBox" class="status">
-  <b>Google Calendar</b>
-  <div id="calMsg"></div>
-</div>
-
-<button onclick="post('/api/log-now')">עדכון ידני ל-Sheet</button>
-<button onclick="post('/api/calendar/update-now')">עדכון יומן</button>
-
-<!-- TIMER 1 -->
-<div class="card">
-  <h2>טיימר 1</h2>
-  <div class="timer-time" id="t1">00:00:00</div>
-
-  <div class="row">
-    <button class="danger" onclick="post('/api/timer/1/stop')">Stop</button>
-    <button class="primary" onclick="post('/api/timer/1/start')">Start</button>
+  <div id="sheetBox" class="status">
+    <b>Google Sheet</b>
+    <div id="sheetMsg" class="small">—</div>
+    <div id="sheetAt" class="small"></div>
   </div>
 
-  <div class="row">
-    <button class="reset" onclick="post('/api/timer/1/reset')">Reset</button>
+  <div id="calBox" class="status">
+    <b>Google Calendar</b>
+    <div id="calMsg" class="small">—</div>
+    <div id="calAt" class="small"></div>
   </div>
 
-  <div class="row">
-    <button onclick="adjust(1,300)">+5 דק</button>
-    <button onclick="adjust(1,-600)">-10 דק</button>
+  <div class="row" style="margin:12px 0">
+    <button onclick="post('/api/log-now')">עדכון ידני ל-Sheet</button>
+    <button onclick="post('/api/calendar/update-now')">עדכון יומן</button>
   </div>
 
-  <div class="row">
-    <input id="set1" class="timebox" value="00:00:00"
-           oninput="maskTime(this)">
-    <button onclick="setMaskedTime(1)">Set</button>
-  </div>
-</div>
+  <!-- TIMER 1 -->
+  <div class="card">
+    <h2>טיימר 1</h2>
+    <div class="timer-time" id="t1">00:00:00</div>
 
-<!-- TIMER 2 -->
-<div class="card">
-  <h2>טיימר 2</h2>
-  <div class="timer-time" id="t2">00:00:00</div>
+    <div class="row">
+      <button class="primary" onclick="post('/api/timer/1/start')">Start</button>
+      <button class="danger" onclick="post('/api/timer/1/stop')">Stop</button>
+    </div>
 
-  <div class="row">
-    <button class="danger" onclick="post('/api/timer/2/stop')">Stop</button>
-    <button class="primary" onclick="post('/api/timer/2/start')">Start</button>
+    <div class="row" style="margin-top:8px">
+      <button class="reset" onclick="post('/api/timer/1/reset')">Reset</button>
+    </div>
+
+    <div class="row" style="margin-top:8px">
+      <button onclick="adjust(1,300)">+5 דק</button>
+      <button onclick="adjust(1,-600)">-10 דק</button>
+    </div>
+
+    <hr>
+    <div><b>Set (עריכה לפי הסדר)</b></div>
+
+    <div class="inputs3" style="margin-top:10px">
+      <input id="h1" inputmode="numeric" maxlength="2" placeholder="HH"
+             oninput="auto2(this,'m1'); syncSpinnerFromInputs(1)"/>
+      <span class="colon">:</span>
+      <input id="m1" inputmode="numeric" maxlength="2" placeholder="MM"
+             oninput="auto2(this,'s1'); clampMMSS(this); syncSpinnerFromInputs(1)"/>
+      <span class="colon">:</span>
+      <input id="s1" inputmode="numeric" maxlength="2" placeholder="SS"
+             oninput="auto2(this,null); clampMMSS(this); syncSpinnerFromInputs(1)"/>
+      <button onclick="setFromInputs(1)">Set</button>
+    </div>
+
+    <div class="small" style="margin-top:10px">או בורר גרפי (Spinner):</div>
+
+    <div class="spinnerRow">
+      <div class="spGroup">
+        <select id="sh1" onchange="syncInputsFromSpinner(1)"></select>
+        <div class="labelMini">שעות</div>
+      </div>
+      <div class="spGroup">
+        <select id="sm1" onchange="syncInputsFromSpinner(1)"></select>
+        <div class="labelMini">דקות</div>
+      </div>
+      <div class="spGroup">
+        <select id="ss1" onchange="syncInputsFromSpinner(1)"></select>
+        <div class="labelMini">שניות</div>
+      </div>
+      <button onclick="setFromSpinner(1)">Set</button>
+    </div>
   </div>
 
-  <div class="row">
-    <button class="reset" onclick="post('/api/timer/2/reset')">Reset</button>
-  </div>
+  <!-- TIMER 2 -->
+  <div class="card">
+    <h2>טיימר 2</h2>
+    <div class="timer-time" id="t2">00:00:00</div>
 
-  <div class="row">
-    <button onclick="adjust(2,300)">+5 דק</button>
-    <button onclick="adjust(2,-600)">-10 דק</button>
-  </div>
+    <div class="row">
+      <button class="primary" onclick="post('/api/timer/2/start')">Start</button>
+      <button class="danger" onclick="post('/api/timer/2/stop')">Stop</button>
+    </div>
 
-  <div class="row">
-    <input id="set2" class="timebox" value="00:00:00"
-           oninput="maskTime(this)">
-    <button onclick="setMaskedTime(2)">Set</button>
+    <div class="row" style="margin-top:8px">
+      <button class="reset" onclick="post('/api/timer/2/reset')">Reset</button>
+    </div>
+
+    <div class="row" style="margin-top:8px">
+      <button onclick="adjust(2,300)">+5 דק</button>
+      <button onclick="adjust(2,-600)">-10 דק</button>
+    </div>
+
+    <hr>
+    <div><b>Set (עריכה לפי הסדר)</b></div>
+
+    <div class="inputs3" style="margin-top:10px">
+      <input id="h2" inputmode="numeric" maxlength="2" placeholder="HH"
+             oninput="auto2(this,'m2'); syncSpinnerFromInputs(2)"/>
+      <span class="colon">:</span>
+      <input id="m2" inputmode="numeric" maxlength="2" placeholder="MM"
+             oninput="auto2(this,'s2'); clampMMSS(this); syncSpinnerFromInputs(2)"/>
+      <span class="colon">:</span>
+      <input id="s2" inputmode="numeric" maxlength="2" placeholder="SS"
+             oninput="auto2(this,null); clampMMSS(this); syncSpinnerFromInputs(2)"/>
+      <button onclick="setFromInputs(2)">Set</button>
+    </div>
+
+    <div class="small" style="margin-top:10px">או בורר גרפי (Spinner):</div>
+
+    <div class="spinnerRow">
+      <div class="spGroup">
+        <select id="sh2" onchange="syncInputsFromSpinner(2)"></select>
+        <div class="labelMini">שעות</div>
+      </div>
+      <div class="spGroup">
+        <select id="sm2" onchange="syncInputsFromSpinner(2)"></select>
+        <div class="labelMini">דקות</div>
+      </div>
+      <div class="spGroup">
+        <select id="ss2" onchange="syncInputsFromSpinner(2)"></select>
+        <div class="labelMini">שניות</div>
+      </div>
+      <button onclick="setFromSpinner(2)">Set</button>
+    </div>
   </div>
-</div>
 
 </div>
 
 <script>
-let editing=false;
+  function pad2(n){ n = Number(n)||0; return String(n).padStart(2,'0'); }
+  function clamp(n,min,max){ n=Number(n)||0; return Math.max(min, Math.min(max, n)); }
 
-async function post(url,body){
-  await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):null});
-}
+  async function post(url, body){
+    await fetch(url,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: body ? JSON.stringify(body) : null
+    });
+  }
 
-function adjust(i,delta){
-  post(`/api/timer/${i}/adjust`,{delta});
-}
+  function adjust(i, delta){
+    post(`/api/timer/${i}/adjust`, {delta});
+  }
 
-/* ====== TIME MASK ====== */
-function maskTime(el){
-  let v = el.value.replace(/\D/g,'').slice(0,6);
-  while(v.length<6) v='0'+v;
-  el.value = v.slice(0,2)+':'+v.slice(2,4)+':'+v.slice(4,6);
-}
+  // ✅ sequential typing HH -> MM -> SS (בלי "הולך שמאלה")
+  function auto2(el, nextId){
+    el.value = (el.value || '').replace(/\D/g,'').slice(0,2);
+    if(el.value.length === 2 && nextId){
+      const nxt = document.getElementById(nextId);
+      if(nxt){ nxt.focus(); nxt.select(); }
+    }
+  }
 
-function setMaskedTime(i){
-  const el=document.getElementById('set'+i);
-  const [h,m,s]=el.value.split(':').map(Number);
-  const sec=h*3600+m*60+s;
-  post(`/api/timer/${i}/set`,{seconds:sec});
-}
+  function clampMMSS(el){
+    if(el.id.startsWith('m') || el.id.startsWith('s')){
+      const v = clamp(el.value, 0, 59);
+      el.value = pad2(v);
+    }
+  }
 
-/* ====== STATUS ====== */
-async function refresh(){
-  const j=await fetch('/api/status').then(r=>r.json());
-  document.getElementById('nowLine').innerText=j.now_str;
+  function setFromInputs(i){
+    const h = clamp(document.getElementById('h'+i).value, 0, 999);
+    const m = clamp(document.getElementById('m'+i).value, 0, 59);
+    const s = clamp(document.getElementById('s'+i).value, 0, 59);
+    const seconds = Number(h)*3600 + Number(m)*60 + Number(s);
+    post(`/api/timer/${i}/set`, {seconds});
+  }
 
-  document.getElementById('t1').innerText=j.timers[0];
-  document.getElementById('t2').innerText=j.timers[1];
+  // ✅ spinner
+  function fillSelect(sel, from, to){
+    sel.innerHTML = '';
+    for(let x=from; x<=to; x++){
+      const o=document.createElement('option');
+      o.value=String(x);
+      o.textContent=pad2(x);
+      sel.appendChild(o);
+    }
+  }
 
-  document.getElementById('sheetBox').className='status '+(j.sheet.ok?'good':'bad');
-  document.getElementById('sheetMsg').innerText=j.sheet.msg||'—';
+  function initSpinners(){
+    // שעות 0..99 (אם תרצה יותר — תגיד)
+    ['1','2'].forEach(i=>{
+      fillSelect(document.getElementById('sh'+i), 0, 99);
+      fillSelect(document.getElementById('sm'+i), 0, 59);
+      fillSelect(document.getElementById('ss'+i), 0, 59);
 
-  document.getElementById('calBox').className='status '+(j.calendar.ok?'good':'bad');
-  document.getElementById('calMsg').innerText=j.calendar.msg||'—';
-}
+      document.getElementById('sh'+i).value='0';
+      document.getElementById('sm'+i).value='0';
+      document.getElementById('ss'+i).value='0';
+      syncInputsFromSpinner(Number(i));
+    });
+  }
 
-refresh();
-setInterval(refresh,1000);
+  function syncInputsFromSpinner(i){
+    const h = document.getElementById('sh'+i).value;
+    const m = document.getElementById('sm'+i).value;
+    const s = document.getElementById('ss'+i).value;
+    document.getElementById('h'+i).value = pad2(h);
+    document.getElementById('m'+i).value = pad2(m);
+    document.getElementById('s'+i).value = pad2(s);
+  }
+
+  function syncSpinnerFromInputs(i){
+    const h = clamp(document.getElementById('h'+i).value, 0, 99);
+    const m = clamp(document.getElementById('m'+i).value, 0, 59);
+    const s = clamp(document.getElementById('s'+i).value, 0, 59);
+    document.getElementById('sh'+i).value = String(h);
+    document.getElementById('sm'+i).value = String(m);
+    document.getElementById('ss'+i).value = String(s);
+  }
+
+  function setFromSpinner(i){
+    const h = clamp(document.getElementById('sh'+i).value, 0, 999);
+    const m = clamp(document.getElementById('sm'+i).value, 0, 59);
+    const s = clamp(document.getElementById('ss'+i).value, 0, 59);
+    const seconds = Number(h)*3600 + Number(m)*60 + Number(s);
+    post(`/api/timer/${i}/set`, {seconds});
+  }
+
+  // ✅ status refresh + messages for Sheet/Calendar
+  async function refresh(){
+    const j = await fetch('/api/status').then(r=>r.json());
+
+    document.getElementById('nowLine').innerText =
+      (j.mode ? `(${j.mode.toUpperCase()}) ` : '') + (j.now_str || '—');
+
+    document.getElementById('t1').innerText = j.timers?.[0] || '00:00:00';
+    document.getElementById('t2').innerText = j.timers?.[1] || '00:00:00';
+
+    const sheetOk = !!j.sheet?.ok;
+    document.getElementById('sheetBox').className = 'status ' + (sheetOk ? 'good' : 'bad');
+    document.getElementById('sheetMsg').innerText = j.sheet?.msg || '—';
+    document.getElementById('sheetAt').innerText = j.sheet?.at ? (`${j.sheet.at} (mode=${j.sheet.mode||''})`) : '';
+
+    const calOk = !!j.calendar?.ok;
+    document.getElementById('calBox').className = 'status ' + (calOk ? 'good' : 'bad');
+    document.getElementById('calMsg').innerText = j.calendar?.msg || '—';
+    document.getElementById('calAt').innerText = j.calendar?.at || '';
+  }
+
+  initSpinners();
+  refresh();
+  setInterval(refresh, 1000);
 </script>
+
 </body>
 </html>
