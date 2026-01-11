@@ -1,310 +1,246 @@
 <!doctype html>
 <html lang="he" dir="rtl">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Work Timers</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Work Timers</title>
+  <style>
+    body { font-family: Arial, sans-serif; background:#f5f6f7; margin:0; }
+    .wrap { max-width:720px; margin:0 auto; padding:16px; }
+    h1 { text-align:center; margin:10px 0 6px; }
+    .now { text-align:center; color:#333; margin-bottom:10px; }
+    .banner { border-radius:10px; padding:10px 12px; margin:10px 0; }
+    .ok { background:#e8fff0; border:1px solid #bfe7c8; }
+    .bad { background:#ffecec; border:1px solid #f0b4b4; }
+    .banner .title { font-weight:700; margin-bottom:4px; }
+    .muted { color:#666; font-size:13px; }
 
-<style>
-  body{font-family:Arial;background:#f5f6f7;margin:0;padding:20px}
-  .wrap{max-width:560px;margin:auto}
-  h1{text-align:center;margin:10px 0 6px}
-  #nowLine{text-align:center;margin-bottom:12px;font-weight:800}
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:center; }
+    .btn { padding:10px 14px; border-radius:10px; border:1px solid #ccc; background:#fff; cursor:pointer; }
+    .btn.primary { background:#2e7d32; color:#fff; border:none; }
+    .btn.stop { background:#1976d2; color:#fff; border:none; }
+    .btn.reset { background:#6d4c41; color:#fff; border:none; }
+    .btn.gray { background:#eceff1; }
+    .card { background:#fff; border-radius:16px; padding:14px; margin:12px 0; box-shadow:0 1px 8px rgba(0,0,0,.06); }
+    .timerTitle { text-align:center; font-size:20px; font-weight:700; margin:6px 0; }
+    .time { text-align:center; font-size:64px; font-weight:800; letter-spacing:1px; margin:10px 0; }
 
-  .status{border-radius:14px;padding:12px;margin:10px 0;border:1px solid #ddd}
-  .good{background:#e9fff0}
-  .bad{background:#ffe7e7}
-  .small{font-size:14px;opacity:.9}
+    .setBox { display:flex; gap:8px; justify-content:center; align-items:center; flex-wrap:wrap; margin-top:10px; }
+    input[type="text"] { padding:10px 12px; border-radius:10px; border:1px solid #ccc; font-size:18px; width:240px; text-align:center; direction:ltr; }
+    .small { font-size:12px; color:#777; text-align:center; }
 
-  .row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;align-items:center}
-  button{padding:12px 16px;font-size:18px;border-radius:10px;border:1px solid #bbb}
-  .primary{background:#2e7d32;color:#fff;border-color:#2e7d32}
-  .danger{background:#1565c0;color:#fff;border-color:#1565c0}
-  .reset{background:#6d4c41;color:#fff;border-color:#6d4c41}
-
-  .card{background:#fff;border-radius:16px;padding:18px;margin:14px 0;border:1px solid #ddd;text-align:center}
-  .timer-time{font-size:58px;font-weight:900;letter-spacing:1px}
-  hr{border:none;border-top:1px solid #eee;margin:12px 0}
-
-  /* sequential inputs */
-  .inputs3{
-    display:flex;gap:8px;justify-content:center;align-items:center;
-    direction:ltr; /* חשוב! כדי שהעריכה תהיה לפי הסדר */
-  }
-  .inputs3 input{
-    width:56px;
-    font-size:22px;
-    padding:10px 8px;
-    text-align:center;
-    border-radius:10px;
-    border:1px solid #bbb;
-  }
-  .colon{font-size:22px;font-weight:800}
-
-  /* spinner */
-  .spinnerRow{
-    display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap;
-    margin-top:10px;
-    direction:ltr;
-  }
-  .spinnerRow select{
-    font-size:18px;
-    padding:10px 10px;
-    border-radius:10px;
-    border:1px solid #bbb;
-  }
-  .spGroup{display:flex;flex-direction:column;align-items:center}
-  .labelMini{font-size:12px;opacity:.75;margin-top:2px}
-</style>
+    .footer { height:20px; }
+  </style>
 </head>
-
 <body>
-<div class="wrap">
+  <div class="wrap">
+    <h1>⏱️ Work Timers</h1>
+    <div class="now" id="nowLine">טוען...</div>
 
-  <h1>Work Timers ⏱️</h1>
-  <div id="nowLine">—</div>
+    <!-- SHEET banner -->
+    <div id="sheetBanner" class="banner ok" style="display:none;">
+      <div class="title">Google Sheet</div>
+      <div id="sheetMsg"></div>
+      <div class="muted" id="sheetAt"></div>
+    </div>
 
-  <div id="sheetBox" class="status">
-    <b>Google Sheet</b>
-    <div id="sheetMsg" class="small">—</div>
-    <div id="sheetAt" class="small"></div>
+    <!-- CALENDAR banner -->
+    <div id="calBanner" class="banner ok" style="display:none;">
+      <div class="title">Google Calendar</div>
+      <div id="calMsg"></div>
+      <div class="muted" id="calAt"></div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <button class="btn gray" id="btnLogNow">📄 עדכן עכשיו ל-Sheet</button>
+        <button class="btn gray" id="btnCalNow">📅 עדכן עכשיו ל-Calendar</button>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn gray" id="btnSimStart">🧪 הפעל סימולציה</button>
+        <button class="btn gray" id="btnSimStop">עצור סימולציה</button>
+      </div>
+      <div class="small" id="modeLine"></div>
+    </div>
+
+    <!-- Timer 1 -->
+    <div class="card">
+      <div class="timerTitle">טיימר 1</div>
+      <div class="time" id="t1">00:00:00</div>
+
+      <div class="row">
+        <button class="btn primary" onclick="post('/api/timer/1/start')">Start ▶</button>
+        <button class="btn stop" onclick="post('/api/timer/1/stop')">Stop ⏸</button>
+      </div>
+
+      <div class="row" style="margin-top:10px;">
+        <button class="btn reset" onclick="post('/api/timer/1/reset')">Reset 🔄</button>
+      </div>
+
+      <div class="row" style="margin-top:10px;">
+        <button class="btn" onclick="adjust(1, +300)">+5 דק</button>
+        <button class="btn" onclick="adjust(1, -600)">-10 דק</button>
+      </div>
+
+      <div class="setBox">
+        <input id="set1" type="text" inputmode="numeric" placeholder="HH:MM:SS / MM:SS / HH" />
+        <button class="btn" onclick="setFromInput(1)">Set</button>
+      </div>
+    </div>
+
+    <!-- Timer 2 -->
+    <div class="card">
+      <div class="timerTitle">טיימר 2</div>
+      <div class="time" id="t2">00:00:00</div>
+
+      <div class="row">
+        <button class="btn primary" onclick="post('/api/timer/2/start')">Start ▶</button>
+        <button class="btn stop" onclick="post('/api/timer/2/stop')">Stop ⏸</button>
+      </div>
+
+      <div class="row" style="margin-top:10px;">
+        <button class="btn reset" onclick="post('/api/timer/2/reset')">Reset 🔄</button>
+      </div>
+
+      <div class="row" style="margin-top:10px;">
+        <button class="btn" onclick="adjust(2, +300)">+5 דק</button>
+        <button class="btn" onclick="adjust(2, -600)">-10 דק</button>
+      </div>
+
+      <div class="setBox">
+        <input id="set2" type="text" inputmode="numeric" placeholder="HH:MM:SS / MM:SS / HH" />
+        <button class="btn" onclick="setFromInput(2)">Set</button>
+      </div>
+    </div>
+
+    <div class="footer"></div>
   </div>
-
-  <div id="calBox" class="status">
-    <b>Google Calendar</b>
-    <div id="calMsg" class="small">—</div>
-    <div id="calAt" class="small"></div>
-  </div>
-
-  <div class="row" style="margin:12px 0">
-    <button onclick="post('/api/log-now')">עדכון ידני ל-Sheet</button>
-    <button onclick="post('/api/calendar/update-now')">עדכון יומן</button>
-  </div>
-
-  <!-- TIMER 1 -->
-  <div class="card">
-    <h2>טיימר 1</h2>
-    <div class="timer-time" id="t1">00:00:00</div>
-
-    <div class="row">
-      <button class="primary" onclick="post('/api/timer/1/start')">Start</button>
-      <button class="danger" onclick="post('/api/timer/1/stop')">Stop</button>
-    </div>
-
-    <div class="row" style="margin-top:8px">
-      <button class="reset" onclick="post('/api/timer/1/reset')">Reset</button>
-    </div>
-
-    <div class="row" style="margin-top:8px">
-      <button onclick="adjust(1,300)">+5 דק</button>
-      <button onclick="adjust(1,-600)">-10 דק</button>
-    </div>
-
-    <hr>
-    <div><b>Set (עריכה לפי הסדר)</b></div>
-
-    <div class="inputs3" style="margin-top:10px">
-      <input id="h1" inputmode="numeric" maxlength="2" placeholder="HH"
-             oninput="auto2(this,'m1'); syncSpinnerFromInputs(1)"/>
-      <span class="colon">:</span>
-      <input id="m1" inputmode="numeric" maxlength="2" placeholder="MM"
-             oninput="auto2(this,'s1'); clampMMSS(this); syncSpinnerFromInputs(1)"/>
-      <span class="colon">:</span>
-      <input id="s1" inputmode="numeric" maxlength="2" placeholder="SS"
-             oninput="auto2(this,null); clampMMSS(this); syncSpinnerFromInputs(1)"/>
-      <button onclick="setFromInputs(1)">Set</button>
-    </div>
-
-    <div class="small" style="margin-top:10px">או בורר גרפי (Spinner):</div>
-
-    <div class="spinnerRow">
-      <div class="spGroup">
-        <select id="sh1" onchange="syncInputsFromSpinner(1)"></select>
-        <div class="labelMini">שעות</div>
-      </div>
-      <div class="spGroup">
-        <select id="sm1" onchange="syncInputsFromSpinner(1)"></select>
-        <div class="labelMini">דקות</div>
-      </div>
-      <div class="spGroup">
-        <select id="ss1" onchange="syncInputsFromSpinner(1)"></select>
-        <div class="labelMini">שניות</div>
-      </div>
-      <button onclick="setFromSpinner(1)">Set</button>
-    </div>
-  </div>
-
-  <!-- TIMER 2 -->
-  <div class="card">
-    <h2>טיימר 2</h2>
-    <div class="timer-time" id="t2">00:00:00</div>
-
-    <div class="row">
-      <button class="primary" onclick="post('/api/timer/2/start')">Start</button>
-      <button class="danger" onclick="post('/api/timer/2/stop')">Stop</button>
-    </div>
-
-    <div class="row" style="margin-top:8px">
-      <button class="reset" onclick="post('/api/timer/2/reset')">Reset</button>
-    </div>
-
-    <div class="row" style="margin-top:8px">
-      <button onclick="adjust(2,300)">+5 דק</button>
-      <button onclick="adjust(2,-600)">-10 דק</button>
-    </div>
-
-    <hr>
-    <div><b>Set (עריכה לפי הסדר)</b></div>
-
-    <div class="inputs3" style="margin-top:10px">
-      <input id="h2" inputmode="numeric" maxlength="2" placeholder="HH"
-             oninput="auto2(this,'m2'); syncSpinnerFromInputs(2)"/>
-      <span class="colon">:</span>
-      <input id="m2" inputmode="numeric" maxlength="2" placeholder="MM"
-             oninput="auto2(this,'s2'); clampMMSS(this); syncSpinnerFromInputs(2)"/>
-      <span class="colon">:</span>
-      <input id="s2" inputmode="numeric" maxlength="2" placeholder="SS"
-             oninput="auto2(this,null); clampMMSS(this); syncSpinnerFromInputs(2)"/>
-      <button onclick="setFromInputs(2)">Set</button>
-    </div>
-
-    <div class="small" style="margin-top:10px">או בורר גרפי (Spinner):</div>
-
-    <div class="spinnerRow">
-      <div class="spGroup">
-        <select id="sh2" onchange="syncInputsFromSpinner(2)"></select>
-        <div class="labelMini">שעות</div>
-      </div>
-      <div class="spGroup">
-        <select id="sm2" onchange="syncInputsFromSpinner(2)"></select>
-        <div class="labelMini">דקות</div>
-      </div>
-      <div class="spGroup">
-        <select id="ss2" onchange="syncInputsFromSpinner(2)"></select>
-        <div class="labelMini">שניות</div>
-      </div>
-      <button onclick="setFromSpinner(2)">Set</button>
-    </div>
-  </div>
-
-</div>
 
 <script>
-  function pad2(n){ n = Number(n)||0; return String(n).padStart(2,'0'); }
-  function clamp(n,min,max){ n=Number(n)||0; return Math.max(min, Math.min(max, n)); }
-
-  async function post(url, body){
-    await fetch(url,{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: body ? JSON.stringify(body) : null
-    });
-  }
-
-  function adjust(i, delta){
-    post(`/api/timer/${i}/adjust`, {delta});
-  }
-
-  // ✅ sequential typing HH -> MM -> SS (בלי "הולך שמאלה")
-  function auto2(el, nextId){
-    el.value = (el.value || '').replace(/\D/g,'').slice(0,2);
-    if(el.value.length === 2 && nextId){
-      const nxt = document.getElementById(nextId);
-      if(nxt){ nxt.focus(); nxt.select(); }
+  async function post(url, body) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: body ? JSON.stringify(body) : '{}'
+      });
+      await refresh();
+      return res;
+    } catch (e) {
+      console.log(e);
     }
   }
 
-  function clampMMSS(el){
-    if(el.id.startsWith('m') || el.id.startsWith('s')){
-      const v = clamp(el.value, 0, 59);
-      el.value = pad2(v);
+  async function adjust(i, delta) {
+    await post(`/api/timer/${i}/adjust`, {delta});
+  }
+
+  function parseTimeToSeconds(s) {
+    // supports: HH:MM:SS , MM:SS , HH
+    s = (s || '').trim();
+    if (!s) return null;
+
+    if (s.includes(':')) {
+      const parts = s.split(':').map(x => x.trim());
+      if (parts.some(p => p === '' || isNaN(Number(p)))) return null;
+
+      if (parts.length === 2) {
+        const mm = Number(parts[0]);
+        const ss = Number(parts[1]);
+        return mm*60 + ss;
+      }
+      if (parts.length === 3) {
+        const hh = Number(parts[0]);
+        const mm = Number(parts[1]);
+        const ss = Number(parts[2]);
+        return hh*3600 + mm*60 + ss;
+      }
+      return null;
+    }
+
+    // only number = hours
+    if (isNaN(Number(s))) return null;
+    return Number(s) * 3600;
+  }
+
+  async function setFromInput(i) {
+    const val = document.getElementById(`set${i}`).value;
+    const sec = parseTimeToSeconds(val);
+    if (sec === null) {
+      alert("פורמט לא תקין. נסה HH:MM:SS או MM:SS או HH");
+      return;
+    }
+    await post(`/api/timer/${i}/set`, {seconds: sec});
+  }
+
+  function setBanner(elBanner, ok, title, msg, at) {
+    elBanner.style.display = 'block';
+    elBanner.className = 'banner ' + (ok ? 'ok' : 'bad');
+    if (title === 'sheet') {
+      document.getElementById('sheetMsg').textContent = msg || '';
+      document.getElementById('sheetAt').textContent  = at ? at : '';
+    } else {
+      document.getElementById('calMsg').textContent = msg || '';
+      document.getElementById('calAt').textContent  = at ? at : '';
     }
   }
 
-  function setFromInputs(i){
-    const h = clamp(document.getElementById('h'+i).value, 0, 999);
-    const m = clamp(document.getElementById('m'+i).value, 0, 59);
-    const s = clamp(document.getElementById('s'+i).value, 0, 59);
-    const seconds = Number(h)*3600 + Number(m)*60 + Number(s);
-    post(`/api/timer/${i}/set`, {seconds});
-  }
+  async function refresh() {
+    const r = await fetch('/api/status');
+    const data = await r.json();
 
-  // ✅ spinner
-  function fillSelect(sel, from, to){
-    sel.innerHTML = '';
-    for(let x=from; x<=to; x++){
-      const o=document.createElement('option');
-      o.value=String(x);
-      o.textContent=pad2(x);
-      sel.appendChild(o);
+    document.getElementById('nowLine').textContent =
+      (data.mode ? `(${data.mode.toUpperCase()}) ` : '') + (data.now_str || '');
+
+    document.getElementById('modeLine').textContent =
+      data.simulation ? 'סימולציה פעילה' : 'מצב אמיתי';
+
+    if (data.timers && data.timers.length >= 2) {
+      document.getElementById('t1').textContent = data.timers[0];
+      document.getElementById('t2').textContent = data.timers[1];
+    }
+
+    if (data.sheet) {
+      setBanner(
+        document.getElementById('sheetBanner'),
+        !!data.sheet.ok,
+        'sheet',
+        (data.sheet.msg || (data.sheet.ok ? 'OK' : 'שגיאה')),
+        data.sheet.at || ''
+      );
+    }
+    if (data.calendar) {
+      setBanner(
+        document.getElementById('calBanner'),
+        !!data.calendar.ok,
+        'cal',
+        (data.calendar.msg || (data.calendar.ok ? 'OK' : 'שגיאה')),
+        data.calendar.at || ''
+      );
     }
   }
 
-  function initSpinners(){
-    // שעות 0..99 (אם תרצה יותר — תגיד)
-    ['1','2'].forEach(i=>{
-      fillSelect(document.getElementById('sh'+i), 0, 99);
-      fillSelect(document.getElementById('sm'+i), 0, 59);
-      fillSelect(document.getElementById('ss'+i), 0, 59);
+  document.getElementById('btnLogNow').addEventListener('click', async () => {
+    await post('/api/log-now');
+  });
 
-      document.getElementById('sh'+i).value='0';
-      document.getElementById('sm'+i).value='0';
-      document.getElementById('ss'+i).value='0';
-      syncInputsFromSpinner(Number(i));
-    });
-  }
+  document.getElementById('btnCalNow').addEventListener('click', async () => {
+    await post('/api/calendar/update-now');
+  });
 
-  function syncInputsFromSpinner(i){
-    const h = document.getElementById('sh'+i).value;
-    const m = document.getElementById('sm'+i).value;
-    const s = document.getElementById('ss'+i).value;
-    document.getElementById('h'+i).value = pad2(h);
-    document.getElementById('m'+i).value = pad2(m);
-    document.getElementById('s'+i).value = pad2(s);
-  }
+  document.getElementById('btnSimStart').addEventListener('click', async () => {
+    const dt = prompt("הכנס תאריך ושעה (YYYY-MM-DD HH:MM)", "2026-01-07 08:00");
+    if (!dt) return;
+    await post('/api/sim/start', {datetime: dt});
+  });
 
-  function syncSpinnerFromInputs(i){
-    const h = clamp(document.getElementById('h'+i).value, 0, 99);
-    const m = clamp(document.getElementById('m'+i).value, 0, 59);
-    const s = clamp(document.getElementById('s'+i).value, 0, 59);
-    document.getElementById('sh'+i).value = String(h);
-    document.getElementById('sm'+i).value = String(m);
-    document.getElementById('ss'+i).value = String(s);
-  }
+  document.getElementById('btnSimStop').addEventListener('click', async () => {
+    await post('/api/sim/stop');
+  });
 
-  function setFromSpinner(i){
-    const h = clamp(document.getElementById('sh'+i).value, 0, 999);
-    const m = clamp(document.getElementById('sm'+i).value, 0, 59);
-    const s = clamp(document.getElementById('ss'+i).value, 0, 59);
-    const seconds = Number(h)*3600 + Number(m)*60 + Number(s);
-    post(`/api/timer/${i}/set`, {seconds});
-  }
-
-  // ✅ status refresh + messages for Sheet/Calendar
-  async function refresh(){
-    const j = await fetch('/api/status').then(r=>r.json());
-
-    document.getElementById('nowLine').innerText =
-      (j.mode ? `(${j.mode.toUpperCase()}) ` : '') + (j.now_str || '—');
-
-    document.getElementById('t1').innerText = j.timers?.[0] || '00:00:00';
-    document.getElementById('t2').innerText = j.timers?.[1] || '00:00:00';
-
-    const sheetOk = !!j.sheet?.ok;
-    document.getElementById('sheetBox').className = 'status ' + (sheetOk ? 'good' : 'bad');
-    document.getElementById('sheetMsg').innerText = j.sheet?.msg || '—';
-    document.getElementById('sheetAt').innerText = j.sheet?.at ? (`${j.sheet.at} (mode=${j.sheet.mode||''})`) : '';
-
-    const calOk = !!j.calendar?.ok;
-    document.getElementById('calBox').className = 'status ' + (calOk ? 'good' : 'bad');
-    document.getElementById('calMsg').innerText = j.calendar?.msg || '—';
-    document.getElementById('calAt').innerText = j.calendar?.at || '';
-  }
-
-  initSpinners();
+  // Polling (לא משנה אם זה כל שנייה/דקה – ה-AUTO כבר סלחני)
   refresh();
-  setInterval(refresh, 1000);
+  setInterval(refresh, 5000);
 </script>
-
 </body>
 </html>
