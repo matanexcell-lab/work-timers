@@ -26,221 +26,151 @@
     .time { text-align:center; font-size:64px; font-weight:800; letter-spacing:1px; margin:10px 0; }
 
     .setBox { display:flex; gap:8px; justify-content:center; align-items:center; flex-wrap:wrap; margin-top:10px; }
-    input[type="text"] { padding:10px 12px; border-radius:10px; border:1px solid #ccc; font-size:18px; width:240px; text-align:center; direction:ltr; }
+    input[type="text"] {
+      padding:10px 12px;
+      border-radius:10px;
+      border:1px solid #ccc;
+      font-size:18px;
+      width:240px;
+      text-align:center;
+      direction:ltr;
+    }
     .small { font-size:12px; color:#777; text-align:center; }
-
-    .footer { height:20px; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>⏱️ Work Timers</h1>
-    <div class="now" id="nowLine">טוען...</div>
+<div class="wrap">
+  <h1>⏱️ Work Timers</h1>
+  <div class="now" id="nowLine">טוען…</div>
 
-    <!-- SHEET banner -->
-    <div id="sheetBanner" class="banner ok" style="display:none;">
-      <div class="title">Google Sheet</div>
-      <div id="sheetMsg"></div>
-      <div class="muted" id="sheetAt"></div>
-    </div>
-
-    <!-- CALENDAR banner -->
-    <div id="calBanner" class="banner ok" style="display:none;">
-      <div class="title">Google Calendar</div>
-      <div id="calMsg"></div>
-      <div class="muted" id="calAt"></div>
-    </div>
-
-    <div class="card">
-      <div class="row">
-        <button class="btn gray" id="btnLogNow">📄 עדכן עכשיו ל-Sheet</button>
-        <button class="btn gray" id="btnCalNow">📅 עדכן עכשיו ל-Calendar</button>
-      </div>
-      <div class="row" style="margin-top:10px;">
-        <button class="btn gray" id="btnSimStart">🧪 הפעל סימולציה</button>
-        <button class="btn gray" id="btnSimStop">עצור סימולציה</button>
-      </div>
-      <div class="small" id="modeLine"></div>
-    </div>
-
-    <!-- Timer 1 -->
-    <div class="card">
-      <div class="timerTitle">טיימר 1</div>
-      <div class="time" id="t1">00:00:00</div>
-
-      <div class="row">
-        <button class="btn primary" onclick="post('/api/timer/1/start')">Start ▶</button>
-        <button class="btn stop" onclick="post('/api/timer/1/stop')">Stop ⏸</button>
-      </div>
-
-      <div class="row" style="margin-top:10px;">
-        <button class="btn reset" onclick="post('/api/timer/1/reset')">Reset 🔄</button>
-      </div>
-
-      <div class="row" style="margin-top:10px;">
-        <button class="btn" onclick="adjust(1, +300)">+5 דק</button>
-        <button class="btn" onclick="adjust(1, -600)">-10 דק</button>
-      </div>
-
-      <div class="setBox">
-        <input id="set1" type="text" inputmode="numeric" placeholder="HH:MM:SS / MM:SS / HH" />
-        <button class="btn" onclick="setFromInput(1)">Set</button>
-      </div>
-    </div>
-
-    <!-- Timer 2 -->
-    <div class="card">
-      <div class="timerTitle">טיימר 2</div>
-      <div class="time" id="t2">00:00:00</div>
-
-      <div class="row">
-        <button class="btn primary" onclick="post('/api/timer/2/start')">Start ▶</button>
-        <button class="btn stop" onclick="post('/api/timer/2/stop')">Stop ⏸</button>
-      </div>
-
-      <div class="row" style="margin-top:10px;">
-        <button class="btn reset" onclick="post('/api/timer/2/reset')">Reset 🔄</button>
-      </div>
-
-      <div class="row" style="margin-top:10px;">
-        <button class="btn" onclick="adjust(2, +300)">+5 דק</button>
-        <button class="btn" onclick="adjust(2, -600)">-10 דק</button>
-      </div>
-
-      <div class="setBox">
-        <input id="set2" type="text" inputmode="numeric" placeholder="HH:MM:SS / MM:SS / HH" />
-        <button class="btn" onclick="setFromInput(2)">Set</button>
-      </div>
-    </div>
-
-    <div class="footer"></div>
+  <div id="sheetBanner" class="banner ok" style="display:none;">
+    <div class="title">Google Sheet</div>
+    <div id="sheetMsg"></div>
+    <div class="muted" id="sheetAt"></div>
   </div>
 
+  <div id="calBanner" class="banner ok" style="display:none;">
+    <div class="title">Google Calendar</div>
+    <div id="calMsg"></div>
+    <div class="muted" id="calAt"></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <button class="btn gray" onclick="post('/api/log-now')">📄 עדכן עכשיו ל-Sheet</button>
+      <button class="btn gray" onclick="post('/api/calendar/update-now')">📅 עדכן עכשיו ל-Calendar</button>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn gray" onclick="simStart()">🧪 הפעל סימולציה</button>
+      <button class="btn gray" onclick="post('/api/sim/stop')">עצור סימולציה</button>
+    </div>
+    <div class="small" id="modeLine"></div>
+  </div>
+
+  <!-- Timer 1 -->
+  <div class="card">
+    <div class="timerTitle">טיימר 1</div>
+    <div class="time" id="t1">00:00:00</div>
+    <div class="row">
+      <button class="btn primary" onclick="post('/api/timer/1/start')">Start</button>
+      <button class="btn stop" onclick="post('/api/timer/1/stop')">Stop</button>
+      <button class="btn reset" onclick="post('/api/timer/1/reset')">Reset</button>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn" onclick="adjust(1,300)">+5 דק</button>
+      <button class="btn" onclick="adjust(1,-600)">−10 דק</button>
+    </div>
+    <div class="setBox">
+      <input id="set1" placeholder="HH:MM:SS / MM:SS / HH">
+      <button class="btn" onclick="setTimer(1)">Set</button>
+    </div>
+  </div>
+
+  <!-- Timer 2 -->
+  <div class="card">
+    <div class="timerTitle">טיימר 2</div>
+    <div class="time" id="t2">00:00:00</div>
+    <div class="row">
+      <button class="btn primary" onclick="post('/api/timer/2/start')">Start</button>
+      <button class="btn stop" onclick="post('/api/timer/2/stop')">Stop</button>
+      <button class="btn reset" onclick="post('/api/timer/2/reset')">Reset</button>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn" onclick="adjust(2,300)">+5 דק</button>
+      <button class="btn" onclick="adjust(2,-600)">−10 דק</button>
+    </div>
+    <div class="setBox">
+      <input id="set2" placeholder="HH:MM:SS / MM:SS / HH">
+      <button class="btn" onclick="setTimer(2)">Set</button>
+    </div>
+  </div>
+</div>
+
 <script>
-  async function post(url, body) {
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: body ? JSON.stringify(body) : '{}'
-      });
-      await refresh();
-      return res;
-    } catch (e) {
-      console.log(e);
-    }
-  }
-
-  async function adjust(i, delta) {
-    await post(`/api/timer/${i}/adjust`, {delta});
-  }
-
-  function parseTimeToSeconds(s) {
-    // supports: HH:MM:SS , MM:SS , HH
-    s = (s || '').trim();
-    if (!s) return null;
-
-    if (s.includes(':')) {
-      const parts = s.split(':').map(x => x.trim());
-      if (parts.some(p => p === '' || isNaN(Number(p)))) return null;
-
-      if (parts.length === 2) {
-        const mm = Number(parts[0]);
-        const ss = Number(parts[1]);
-        return mm*60 + ss;
-      }
-      if (parts.length === 3) {
-        const hh = Number(parts[0]);
-        const mm = Number(parts[1]);
-        const ss = Number(parts[2]);
-        return hh*3600 + mm*60 + ss;
-      }
-      return null;
-    }
-
-    // only number = hours
-    if (isNaN(Number(s))) return null;
-    return Number(s) * 3600;
-  }
-
-  async function setFromInput(i) {
-    const val = document.getElementById(`set${i}`).value;
-    const sec = parseTimeToSeconds(val);
-    if (sec === null) {
-      alert("פורמט לא תקין. נסה HH:MM:SS או MM:SS או HH");
-      return;
-    }
-    await post(`/api/timer/${i}/set`, {seconds: sec});
-  }
-
-  function setBanner(elBanner, ok, title, msg, at) {
-    elBanner.style.display = 'block';
-    elBanner.className = 'banner ' + (ok ? 'ok' : 'bad');
-    if (title === 'sheet') {
-      document.getElementById('sheetMsg').textContent = msg || '';
-      document.getElementById('sheetAt').textContent  = at ? at : '';
-    } else {
-      document.getElementById('calMsg').textContent = msg || '';
-      document.getElementById('calAt').textContent  = at ? at : '';
-    }
-  }
-
-  async function refresh() {
-    const r = await fetch('/api/status');
-    const data = await r.json();
-
-    document.getElementById('nowLine').textContent =
-      (data.mode ? `(${data.mode.toUpperCase()}) ` : '') + (data.now_str || '');
-
-    document.getElementById('modeLine').textContent =
-      data.simulation ? 'סימולציה פעילה' : 'מצב אמיתי';
-
-    if (data.timers && data.timers.length >= 2) {
-      document.getElementById('t1').textContent = data.timers[0];
-      document.getElementById('t2').textContent = data.timers[1];
-    }
-
-    if (data.sheet) {
-      setBanner(
-        document.getElementById('sheetBanner'),
-        !!data.sheet.ok,
-        'sheet',
-        (data.sheet.msg || (data.sheet.ok ? 'OK' : 'שגיאה')),
-        data.sheet.at || ''
-      );
-    }
-    if (data.calendar) {
-      setBanner(
-        document.getElementById('calBanner'),
-        !!data.calendar.ok,
-        'cal',
-        (data.calendar.msg || (data.calendar.ok ? 'OK' : 'שגיאה')),
-        data.calendar.at || ''
-      );
-    }
-  }
-
-  document.getElementById('btnLogNow').addEventListener('click', async () => {
-    await post('/api/log-now');
+async function post(url, body) {
+  await fetch(url, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: body ? JSON.stringify(body) : '{}'
   });
+}
 
-  document.getElementById('btnCalNow').addEventListener('click', async () => {
-    await post('/api/calendar/update-now');
-  });
+function parseTime(s){
+  if(!s) return null;
+  s=s.trim();
+  if(s.includes(':')){
+    const p=s.split(':').map(Number);
+    if(p.some(isNaN)) return null;
+    if(p.length===2) return p[0]*60+p[1];
+    if(p.length===3) return p[0]*3600+p[1]*60+p[2];
+    return null;
+  }
+  if(isNaN(Number(s))) return null;
+  return Number(s)*3600;
+}
 
-  document.getElementById('btnSimStart').addEventListener('click', async () => {
-    const dt = prompt("הכנס תאריך ושעה (YYYY-MM-DD HH:MM)", "2026-01-07 08:00");
-    if (!dt) return;
-    await post('/api/sim/start', {datetime: dt});
-  });
+async function setTimer(i){
+  const v=document.getElementById('set'+i).value;
+  const sec=parseTime(v);
+  if(sec==null){ alert('פורמט לא תקין'); return; }
+  await post(`/api/timer/${i}/set`,{seconds:sec});
+}
 
-  document.getElementById('btnSimStop').addEventListener('click', async () => {
-    await post('/api/sim/stop');
-  });
+async function adjust(i,d){
+  await post(`/api/timer/${i}/adjust`,{delta:d});
+}
 
-  // Polling (לא משנה אם זה כל שנייה/דקה – ה-AUTO כבר סלחני)
-  refresh();
-  setInterval(refresh, 5000);
+async function simStart(){
+  const d=prompt('YYYY-MM-DD HH:MM','2026-01-07 08:00');
+  if(!d) return;
+  await post('/api/sim/start',{datetime:d});
+}
+
+async function refresh(){
+  const r=await fetch('/api/status');
+  const d=await r.json();
+
+  nowLine.textContent = d.now_str + (d.simulation?' (SIM)':'');
+  modeLine.textContent = d.simulation?'סימולציה פעילה':'מצב אמיתי';
+
+  t1.textContent=d.timers[0];
+  t2.textContent=d.timers[1];
+
+  sheetBanner.style.display='block';
+  sheetBanner.className='banner '+(d.sheet.ok?'ok':'bad');
+  sheetMsg.textContent=d.sheet.msg||'';
+  sheetAt.textContent=d.sheet.at||'';
+
+  calBanner.style.display='block';
+  calBanner.className='banner '+(d.calendar.ok?'ok':'bad');
+  calMsg.textContent=d.calendar.msg||'';
+  calAt.textContent=d.calendar.at||'';
+}
+
+refresh();
+
+/* ✅ התיקון החשוב */
+setInterval(refresh, 1000);
 </script>
 </body>
 </html>
