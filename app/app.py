@@ -777,12 +777,11 @@ def stop_timer(i):
     total = timer_total_seconds(mode, i, clock)
 
     conn = db()
-    cur = conn.cursor()
     cur.execute("""
-        UPDATE timers
-        SET running=0, elapsed=?, start_epoch=NULL, start_sim_iso=NULL
-        WHERE mode=? AND timer_id=?
-    """, (total, mode, i))
+    UPDATE timers
+    SET running=0, elapsed=?
+    WHERE mode=? AND timer_id=?
+""", (total, mode, i))  
     conn.commit()
     conn.close()
     return ("", 204)
