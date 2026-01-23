@@ -229,12 +229,18 @@ def timer_total_seconds(mode: str, timer_id: int, clock_dt: datetime) -> int:
         return elapsed + int(max(0, now_epoch - float(t["start_epoch"])))
 
     # sim
+# sim
     if t["start_sim_iso"] is None or clock_dt is None:
+        return elapsed
+
+    # ✅ אם הטיימר לא רץ (DONE / PENDING) – הזמן קפוא
+    if int(t["running"]) == 0:
         return elapsed
 
     start_dt = datetime.fromisoformat(t["start_sim_iso"])
     if start_dt.tzinfo is None:
         start_dt = TZ.localize(start_dt)
+
     diff = int(max(0, (clock_dt - start_dt).total_seconds()))
     return elapsed + diff
 
