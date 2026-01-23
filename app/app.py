@@ -10,7 +10,7 @@ from flask import Flask, jsonify, render_template, request
 
 # ✅ templates/ יושב ליד app.py בתוך app/templates
 app = Flask(__name__, template_folder="templates")
-
+route
 # =========================
 # TIMEZONE
 # =========================
@@ -769,22 +769,42 @@ def start_timer(i):
 
 @app.route("/api/timer/<int:i>/stop", methods=["POST"])
 def stop_timer(i):
-    if i < 1 or i > TIMER_COUNT:
-        return jsonify(error="bad timer id"), 400
+  if i < 1 or i > TIMER_COUNT:
+    return jsonify(error="bad timer id"), 400
 
-    mode = current_mode()
-    clock = now_for_mode(mode)
-    total = timer_total_seconds(mode, i, clock)
+mode = current_mode()
+clock = now_for_mode(mode)
 
-    conn = db()
+conn = db()
+cur = conn.cursor()
+
+if mode == "sim":
+    # DONE בסימולציה → התחלה = סיום
     cur.execute("""
-    UPDATE timers
-    SET running=0, elapsed=?
-    WHERE mode=? AND timer_id=?
-""", (total, mode, i))  
-    conn.commit()
-    conn.close()
-    return ("", 204)
+        UPDATE timers
+        SET running=0,
+            elapsed=0,
+            start_sim_iso=?
+        WHERE mode=? AND timer_id=?
+    """, (
+        clock.replace(tzinfo=None).isoformat(timespec="seconds"),
+        mode,
+        i
+    ))
+else:
+    # REAL – נשאר כרגיל
+    total = timer_total_seconds(mode, i, clock)
+    cur.execute("""
+        UPDATE timers
+        SET running=0,
+            elapsed=?
+        WHERE mode=? AND timer_id=?
+    """, (total, mode, i))
+
+conn.commit()
+conn.close()
+return ("", 204)
+
 
 @app.route("/api/timer/<int:i>/reset", methods=["POST"])
 def reset_timer(i):
