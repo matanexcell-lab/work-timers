@@ -113,6 +113,7 @@ async function post(url, body) {
     headers:{'Content-Type':'application/json'},
     body: body ? JSON.stringify(body) : '{}'
   });
+  await refresh(); // ✅ זה התיקון
 }
 
 function parseTime(s){
@@ -168,8 +169,6 @@ async function refresh(){
 }
 
 refresh();
-
-/* ✅ התיקון החשוב */
 setInterval(refresh, 1000);
 </script>
 </body>
